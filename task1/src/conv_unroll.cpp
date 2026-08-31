@@ -5,28 +5,26 @@ void conv_unroll(const float* in, float* out, const float* ker,
                  int H, int W, int K) {
     // TODO(student): replace this placeholder with your unrolled implementation.
     const int p = K / 2;
-    const int in_stride = W + 2 * p;
-    
+    const int in_stride = W + 2 * p;  // padded row stride
+
+    int kx = 0;
     for (int oy = 0; oy < H; ++oy) {
         for (int ox = 0; ox < W; ++ox) {
-            out[oy*W + ox] = 0.0f;
-        }
-    }
+            float acc = 0.0f;
+            for (int ky = 0; ky < K; ++ky) {
 
-    for (int ky = 0; ky < K; ++ky) {
-        for (int kx = 0; kx < K; ++kx) {
-            float ker_val = ker[ky * K + kx];
-            for (int oy = 0; oy < H; ++oy) {
-                const float* in_row = in + (oy + ky) * in_stride + kx;
-                float* out_row = out + oy * W;
-                for (int ox = 0; ox < W; ox += 4) {
-                    out_row[ox] += in_row[ox] * ker_val;
-                    out_row[ox+1] += in_row[ox+1] * ker_val;
-                    out_row[ox+2] += in_row[ox+2] * ker_val;
-                    out_row[ox+3] += in_row[ox+3] * ker_val;
+                for (kx = 0; (kx + 3) < K; kx += 4) {
+                    acc += in[(oy + ky) * in_stride + (ox + kx)] * ker[ky * K + kx];
+                    acc += in[(oy + ky) * in_stride + (ox + kx + 1)] * ker[ky * K + kx + 1];
+                    acc += in[(oy + ky) * in_stride + (ox + kx + 2)] * ker[ky * K + kx + 2];
+                    acc += in[(oy + ky) * in_stride + (ox + kx + 3)] * ker[ky * K + kx + 3];
+                }
+
+                for(; kx < K ; kx++){
+                    acc += in[(oy + ky) * in_stride + (ox + kx)] * ker[ky * K + kx];
                 }
             }
+            out[oy * W + ox] = acc;
         }
     }
-    // conv_naive(in, out, ker, H, W, K);
 }
