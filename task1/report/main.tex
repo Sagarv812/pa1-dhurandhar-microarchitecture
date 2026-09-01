@@ -1,0 +1,292 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+
+\definecolor{primary}{HTML}{1B3A5C}
+\definecolor{accent}{HTML}{2E86AB}
+\definecolor{accent2}{HTML}{C9622A}
+\definecolor{panelbg}{HTML}{F4F6F8}
+
+\renewcommand{\arraystretch}{1.2}
+
+\titleformat{\section}
+  {\normalfont\Large\bfseries\color{primary}}
+  {\thesection}{0.6em}{}[{\color{accent}\titlerule[1.1pt]}]
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\color{primary}}
+  {\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}
+  {\normalfont\bfseries\color{accent}}
+  {\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.6em}{0.8em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.5em}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\small\color{primary}\bfseries CS683 PA-1 - Task 1}
+\fancyhead[R]{\small\color{primary}\nouppercase{\rightmark}}
+\fancyfoot[C]{\small\color{primary}\thepage}
+
+\lstdefinestyle{cmdstyle}{
+    backgroundcolor=\color{panelbg},
+    basicstyle=\ttfamily\small,
+    frame=single,
+    rulecolor=\color{accent},
+    framerule=0.6pt,
+    breaklines=true,
+    columns=fullflexible,
+    xleftmargin=4pt, xrightmargin=4pt,
+    aboveskip=8pt, belowskip=8pt,
+}
+\lstset{style=cmdstyle}
+
+\newtcolorbox{insightbox}{
+    enhanced, breakable, colback=accent!6, colframe=accent,
+    boxrule=0.8pt, arc=3pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+    fonttitle=\bfseries, coltitle=white, colbacktitle=accent,
+    title={Key Insight}, before skip=8pt, after skip=10pt,
+}
+\newtcolorbox{todobox}[1][Fill in]{
+    enhanced, breakable, colback=accent2!4, colframe=accent2!70!black,
+    boxrule=0.6pt, arc=2pt, left=8pt, right=8pt, top=5pt, bottom=5pt,
+    fonttitle=\bfseries\small, coltitle=accent2!70!black,
+    title={TODO --- #1}, before skip=6pt, after skip=10pt,
+}
+
+\usepackage[colorlinks=true,linkcolor=accent,citecolor=accent,urlcolor=accent]{hyperref}
+
+\graphicspath{{../../plots/}}
+
+\begin{document}
+
+\begin{titlepage}
+    \centering
+    \vspace*{2.2cm}
+    {\color{accent}\rule{0.5\textwidth}{1.2pt}}\\[0.6cm]
+    {\Huge\bfseries\color{primary} CS683 PA-1}\\[0.4cm]
+    {\LARGE\bfseries\color{primary} Task 1 Report}\\[0.3cm]
+    {\Large 2D Convolution}\\[0.6cm]
+    {\color{accent}\rule{0.5\textwidth}{1.2pt}}\\[1.4cm]
+
+    {\large Loop Reordering \(\cdot\) Loop Unrolling \(\cdot\) Cache Tiling \(\cdot\) SIMD (AVX2)}\\[2cm]
+
+    \vfill
+    {\large \today}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section*{Setup}
+\addcontentsline{toc}{section}{Setup}
+
+All experiments were run on an Intel 13th Gen CPU, which has both
+performance (P) cores and efficiency (E) cores. The P-cores have a 48\,KB
+L1-D cache, and the E-cores have a 32\,KB L1-D cache. All the measurements
+in this report were run on CPU 0, which is a P-core.
+
+\section{Task 1A --- Loop Reordering \& Unrolling}
+
+\subsection{Loop Reordering}
+\begin{todobox}[Motivation]
+    What motivated the change; what was reordered and why.
+\end{todobox}
+
+\subsubsection*{Considerations}
+\begin{todobox}[Considerations]
+    Unit-stride access pattern; why $K \times K$ passes touch the whole image;
+    correctness constraints.
+\end{todobox}
+
+\subsubsection*{Results}
+\begin{figure}[H]
+    \centering
+    \caption{Speedup of \texttt{conv\_reorder} over \texttt{conv\_naive} vs.\ image size.}
+    \label{fig:reorder-speedup-size}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \caption{Speedup of \texttt{conv\_reorder} over \texttt{conv\_naive} vs.\ kernel size $K$.}
+    \label{fig:reorder-speedup-kernel}
+\end{figure}
+
+\subsubsection*{Discussion}
+\begin{todobox}[Discussion]
+    Metric used to quantify effectiveness and why; explain the ``can be as
+    slow as or slower than naive at large sizes'' behavior seen at $K=3$.
+\end{todobox}
+
+\subsection{Loop Unrolling}
+\begin{todobox}[Motivation]
+    What was unrolled (the reordered inner loop over output columns) and why
+    (expose ILP, hide FP latency).
+\end{todobox}
+
+\subsubsection*{Considerations}
+\begin{todobox}[Considerations]
+    Unroll factor chosen; no remainder tail needed since \texttt{W \% 8 == 0}.
+\end{todobox}
+
+\subsubsection*{Results}
+\begin{figure}[H]
+    \centering
+    \caption{Speedup of \texttt{conv\_unroll} over \texttt{conv\_naive} vs.\ image size.}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \caption{Speedup of \texttt{conv\_unroll} over \texttt{conv\_naive} vs.\ kernel size $K$.}
+\end{figure}
+
+\subsubsection*{Discussion}
+\begin{todobox}[Discussion]
+    Interpret the unrolling results in light of Section~2's memory-bound
+    behavior.
+\end{todobox}
+
+\section{Task 1B --- Tiling}
+
+\subsection{Baseline Profiling}
+
+The CPU we used to run is an Intel hybrid P-core/E-core design. The L1d cache
+size, as seen by doing \texttt{cat /sys/devices/system/cpu/cpu0/cache/index0/size},
+came out to be 48\,KB for the P-core, and 32\,KB for the E-core. All
+measurements below were taken while running on a P-core (CPU 0) with
+\texttt{taskset}, so the L1d size for this baseline is \textbf{48\,KB}.
+
+\begin{lstlisting}[language=bash]
+taskset -c 0 perf stat -r 5 \
+    -e instructions,L1-dcache-loads,L1-dcache-load-misses \
+    ./bin/conv naive
+\end{lstlisting}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lr}
+        \toprule
+        \textbf{Metric} & \textbf{Value (5-run mean)} \\
+        \midrule
+        Instructions      & 4{,}371{,}265{,}012 \\
+        L1d loads         & 892{,}590{,}815 \\
+        L1d load misses   & 571{,}072 \\
+        Time elapsed (s)  & 0.222255 $\pm$ 0.002410 \\
+        \bottomrule
+    \end{tabular}
+    \caption{\texttt{perf stat} results for \texttt{conv\_naive} on a
+    2048$\times$2048, $K=3$ workload, pinned to P-core CPU 0.}
+    \label{tab:naive-baseline-perf}
+\end{table}
+
+\[
+    \text{MPKI} = \frac{\text{L1-D load misses}}{\text{instructions}} \times 1000
+    = \frac{571{,}072}{4{,}371{,}265{,}012} \times 1000 \approx 0.131
+\]
+
+\begin{insightbox}
+    An MPKI of $\approx 0.13$ is pretty low, and it's consistent with what the naive kernel is actually doing. For every
+    output pixel, it just needs a tiny $3\times3$ neighborhood of the input
+    and the same $3\times3$ kernel it already used one pixel ago. All of
+    that easily fits into the cache. So even though we loop through the entire 16\,MB image over the course of the run, at
+    any given moment it's only really touching a small, reused patch of
+    memory. Hence, we don't get as many misses in this case.
+\end{insightbox}
+
+\subsection{Tiled Implementation}
+
+\texttt{conv\_tile} blocks the output into square $T \times T$ tiles, running
+all $K \times K$ taps for a tile before moving on, so the tile stays resident
+in L1-D instead of being re-swept from DRAM $K \times K$ times like
+\texttt{conv\_reorder}. We swept $T$ on the graded workload
+(2048$\times$2048, $K=3$):
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{rrrr}
+        \toprule
+        \textbf{$T$} & \textbf{Time (ms)} & \textbf{Speedup} & \textbf{L1-D MPKI} \\
+        \midrule
+        8  & 18.580 & 0.92$\times$ & 0.920 \\
+        16 & 17.451 & 0.93$\times$ & 21.533 \\
+        24 & 15.642 & 1.03$\times$ & 24.495 \\
+        32 & 16.225 & 1.05$\times$ & 19.624 \\
+        48 & 15.073 & 1.16$\times$ & 16.421 \\
+        \textbf{64} & \textbf{14.809} & \textbf{1.10$\times$} & \textbf{14.148} \\
+        80 & 15.479 & 1.06$\times$ & 9.852 \\
+        \bottomrule
+    \end{tabular}
+    \caption{\texttt{conv\_tile} tile-size sweep, pinned to P-core CPU 0.}
+    \label{tab:tile-sweep}
+\end{table}
+
+$T=64$ is fastest and fits the 48\,KB L1-D ($\approx 33.4$\,KB working set),
+so it's what's committed in \texttt{conv\_tile.cpp}.
+
+\begin{insightbox}
+    Fastest ($T=64$) isn't the same as fewest misses ($T=8$, MPKI
+    $\approx 0.92$): tiny tiles avoid conflict misses but pay for it in loop
+    overhead, T from 16 to 48 all have high MPKI but $T=64$ is the best tradeoff between the two. $T=80$ has an even
+    lower MPKI, but its $\approx 52$\,KB working set no longer fits the
+    48\,KB L1-D, so the capacity misses it introduces cost more in real
+    latency than the MPKI ratio alone shows, making it slower than $T=64$
+    despite ``looking'' more cache-efficient.
+\end{insightbox}
+
+\subsection{Metrics and Plots}
+
+We swept image size $\in \{128, 256, 512, 1024, 2048, 4096\}$ ($K=3$) for
+three tile sizes -- $T=8$ (best MPKI), $T=24$ (worst, mid conflict-miss zone),
+and $T=64$ (committed) -- against the naive baseline:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{task1_tile_mpki_vs_size.png}
+    \caption{L1-D MPKI vs.\ matrix size, one line per tile size.}
+    \label{fig:tile-mpki-vs-size}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{task1_tile_speedup_vs_size.png}
+    \caption{Speedup vs.\ matrix size, one line per tile size.}
+    \label{fig:tile-speedup-vs-size}
+\end{figure}
+
+\subsection{Questions}
+\begin{enumerate}[leftmargin=1.6em, itemsep=0.3em]
+
+    \item \textbf{MPKI change naive $\to$ tiled:} The MPKI, as we increase the tile size, gets worse than the naive implementation.
+    This could be because the naive implementation is already pretty cache-optimal at $K=3$. It benefits from long, contiguous horizontal memory accesses,
+    which the prefetcher could easily predict and optimize. By using tiling, these contiguous accesses are broken into short burst accesses.
+    Moreover, the working set for the naive approach probably already fits well into the L1D cache.
+
+    \item \textbf{MPKI vs.\ matrix size/tile size:} For $T=8$, L1-D MPKI remains consistently low across all matrix sizes.
+    For $T=24$ to $T=64$, MPKI starts low but spikes drastically as the matrix grows and finally plateaus.
+    This is because, at the smallest matrix size, the entire working set fits into L1-D cache so misses are rare.
+    As the matrix grows, the data exceeds L1-D capacity. The $T=8$ tile size keeps its active working set small enough to remain in cache.
+    But larger tile sizes introduce vertical memory jumps that exceed cache capacity, causing misses and moreover, it isn't prefetcher friendly.
+
+    \item \textbf{Speedup achieved:} Speedup was achieved only for larger tile sizes (> 24) with the sweet spot being $T=64$.
+    The performance improved despite high L1-D misses, indicating that tiling successfully improved temporal locality was improved which led to lower latency even
+    if L1-D misses made it fetch data from LLC. This could be because we don't have to go to L3 or DRAM to fetch something we use in a "short" span of time
+    because we reuse that data often (temporal locality). Also the number of instructions of tiling is about half
+    that of the naive implementation so that is also a factor which contributes to the speedup.
+    One of the ways to make this even more efficient could be loop unrolling (to abuse spacial locality further).
+\end{enumerate}
+
+\end{document}

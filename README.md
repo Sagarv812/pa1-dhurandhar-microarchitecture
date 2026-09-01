@@ -17,7 +17,3 @@ for the full problem statement.
 Each task directory is self-contained: build instructions, the files you need to edit,
 grading, and submission requirements all live in that task's own README. Start there.
 
-## Task 1
-
-### Task 1B: Tiling
-

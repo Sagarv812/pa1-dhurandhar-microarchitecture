@@ -1,3 +1,23 @@
 *.pdf
+!task1/task1_report.pdf
+!task2/task2_report.pdf
 */bin/
 .*/
+scripts/
+plots/
+
+# Makefile unnecessary stuff
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
