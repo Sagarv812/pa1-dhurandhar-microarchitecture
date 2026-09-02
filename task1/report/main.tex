@@ -103,7 +103,7 @@ performance (P) cores and efficiency (E) cores. The P-cores have a 48\,KB
 L1-D cache, and the E-cores have a 32\,KB L1-D cache. All the measurements
 in this report were run on CPU 0, which is a P-core.
 
-\section{Task 1A --- Loop Reordering \& Unrolling}
+\section{Task 1A: Loop Reordering \& Unrolling}
 
 \subsection{Loop Reordering}
 \begin{todobox}[Motivation]
@@ -161,7 +161,7 @@ in this report were run on CPU 0, which is a P-core.
     behavior.
 \end{todobox}
 
-\section{Task 1B --- Tiling}
+\section{Task 1B: Tiling}
 
 \subsection{Baseline Profiling}
 
@@ -213,7 +213,7 @@ taskset -c 0 perf stat -r 5 \
 \texttt{conv\_tile} blocks the output into square $T \times T$ tiles, running
 all $K \times K$ taps for a tile before moving on, so the tile stays resident
 in L1-D instead of being re-swept from DRAM $K \times K$ times like
-\texttt{conv\_reorder}. We swept $T$ on the graded workload
+\texttt{conv\_reorder}. We swept $T$ on the workload
 (2048$\times$2048, $K=3$):
 
 \begin{table}[H]
@@ -288,5 +288,97 @@ and $T=64$ (committed) -- against the naive baseline:
     that of the naive implementation so that is also a factor which contributes to the speedup.
     One of the ways to make this even more efficient could be loop unrolling (to abuse spacial locality further).
 \end{enumerate}
+
+\section{Task 1C: SIMD}
+
+\subsection{Baseline Profiling}
+
+Since we're running the naive/simd function from the main function,
+there will be some extra instructions counted by \texttt{perf stat} for
+allocation, filling of arrays etc.
+So, we isolated the
+per-kernel instruction count with \texttt{perf record} on the
+2048$\times$2048, $K=3$ workload, pinned to P-core CPU 0:
+
+\begin{lstlisting}[language=bash]
+taskset -c 0 perf record -e instructions:u -o pr.naive ./bin/conv naive 2048 2048 3
+perf report -i pr.naive --stdio --sort symbol --percent-limit 0.1
+\end{lstlisting}
+
+(and likewise with \texttt{./bin/conv simd 2048 2048 3} for the SIMD kernel.)
+In single-stage mode the main code invokes each convolution function a fixed number of times per
+run: \textbf{11} for \texttt{conv\_naive} (one reference call in
+\texttt{run\_config}, plus one untimed correctness call and
+\texttt{kWarmup}$+$\texttt{kReps}$=2+7$ timed calls in the stage loop) and
+\textbf{10} for the stage under test. Dividing the per-symbol totals by these
+counts gives the per-call figures:
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrrr}
+        \toprule
+        \textbf{Code} & \textbf{Total instr.} & \textbf{Calls} & \textbf{Per call} \\
+        \midrule
+        \texttt{conv\_naive}          & 3{,}910{,}423{,}333 & 11 & 355{,}493{,}030 \\
+        \texttt{conv\_simd} (256-bit) & 435{,}688{,}491     & 10 & 43{,}568{,}849 \\
+        \bottomrule
+    \end{tabular}
+    \caption{No. of instructions for naive and SIMD optimizations}
+    \label{tab:simd-icount}
+\end{table}
+
+\subsection{Instruction Count Analysis}
+
+The 256-bit SIMD code executes $\approx 43.6$\,M instructions per call against
+the naive code's $\approx 355.5$\,M (\textbf{$\approx 8.2\times$}
+reduction), essentially the 8-wide vector width.
+
+
+\subsection{Performance}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrrr}
+        \toprule
+        \textbf{Stage} & \textbf{Time (ms)} & \textbf{GFLOP/s} & \textbf{Speedup} \\
+        \midrule
+        \texttt{conv\_naive} (ref) & 14.779 & 5.11   & 1.00$\times$ \\
+        \texttt{conv\_simd} (256-bit) & 2.327 & 32.44 & 6.35$\times$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{\texttt{./bin/conv simd} on 2048$\times$2048, $K=3$, seed 1234,
+    P-core CPU 0.}
+    \label{tab:simd-speedup}
+\end{table}
+
+\subsection{Width and Size Sweep}
+
+We swept the image size $\in \{128, 256, 512, 1024, 2048, 4096\}$ ($K=3$,
+seed 1234) for each SIMD register width, measuring the speedup of
+\texttt{conv\_simd} over \texttt{conv\_naive} at every point. The 256-bit code
+is the main one. The 512-bit version is skipped as none of our CPUs supported 512-bit SIMD registers :(
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{task1_simd_speedup_vs_size.png}
+    \caption{Speedup of \texttt{conv\_simd} over \texttt{conv\_naive} vs.\ matrix
+    size, one line per SIMD width ($K=3$, P-core CPU 0).}
+    \label{fig:simd-speedup-vs-size}
+\end{figure}
+
+\subsection{Questions}
+\begin{enumerate}[leftmargin=1.6em, itemsep=0.3em]
+    \item \textbf{Instruction count change (naive $\to$ SIMD):} report the
+    observed change and justify it.
+    \item \textbf{Speedup:} how much was achieved, what contributed to it (or
+    what limited it).
+    \item \textbf{Intrinsics used:} which SIMD intrinsics, and the justification
+    for each choice.
+\end{enumerate}
+
+\begin{todobox}[Answers]
+    Answer the three questions above using Tables~\ref{tab:simd-icount},
+    \ref{tab:simd-speedup} and Figure~\ref{fig:simd-speedup-vs-size}.
+\end{todobox}
 
 \end{document}
