@@ -98,7 +98,7 @@
 \section*{Setup}
 \addcontentsline{toc}{section}{Setup}
 
-All experiments were run on an Intel 13th Gen CPU, which has both
+All runs were on an Intel 13th Gen CPU, which has both
 performance (P) cores and efficiency (E) cores. The P-cores have a 48\,KB
 L1-D cache, and the E-cores have a 32\,KB L1-D cache. All the measurements
 in this report were run on CPU 0, which is a P-core.
@@ -106,60 +106,82 @@ in this report were run on CPU 0, which is a P-core.
 \section{Task 1A: Loop Reordering \& Unrolling}
 
 \subsection{Loop Reordering}
-\begin{todobox}[Motivation]
-    What motivated the change; what was reordered and why.
-\end{todobox}
+
+In \texttt{conv\_naive} the loop order is $oy \to ox \to ky \to kx$: for every
+output pixel we loop over all $K^2$ kernel entries. This means the inner loop
+jumps to a different input row for each $ky$, giving strided (non-sequential)
+reads and a scattered write pattern to the accumulator. The reordered version
+moves the kernel loops outside: $ky \to kx \to oy \to ox$. The kernel weight
+\texttt{ker[ky*K+kx]} is calculated outside as a scalar, and the innermost loop over
+$ox$ becomes a unit-stride sequential read of a row of the input and a
+sequential read-modify-write of the output row, which is better for the
+hardware prefetcher.
 
 \subsubsection*{Considerations}
-\begin{todobox}[Considerations]
-    Unit-stride access pattern; why $K \times K$ passes touch the whole image;
-    correctness constraints.
-\end{todobox}
+
+The reorder requires zeroing the output first (since we accumulate across $K^2$
+passes rather than computing each pixel completely before moving on). The
+downside is that the output image is touched $K^2$ times across those passes;
+at large image sizes this causes repeated cache evictions of the output array.
 
 \subsubsection*{Results}
 \begin{figure}[H]
     \centering
-    \caption{Speedup of \texttt{conv\_reorder} over \texttt{conv\_naive} vs.\ image size.}
-    \label{fig:reorder-speedup-size}
-\end{figure}
-\begin{figure}[H]
-    \centering
-    \caption{Speedup of \texttt{conv\_reorder} over \texttt{conv\_naive} vs.\ kernel size $K$.}
-    \label{fig:reorder-speedup-kernel}
+    \includegraphics[width=0.88\textwidth]{task1_reorder_speedup.png}
+    \caption{Speedup of \texttt{conv\_reorder} over \texttt{conv\_naive} vs.\ image size,
+    grouped by kernel size $K$.}
+    \label{fig:reorder-speedup}
 \end{figure}
 
-\subsubsection*{Discussion}
-\begin{todobox}[Discussion]
-    Metric used to quantify effectiveness and why; explain the ``can be as
-    slow as or slower than naive at large sizes'' behavior seen at $K=3$.
-\end{todobox}
+
+We use speedup over \texttt{conv\_naive} as the metric since it directly
+captures runtime benefit relative to the baseline.
+
+At $K=3$, \texttt{conv\_reorder} is \emph{slower} than naive for large images
+($~0.75\times$ at $ 2048^2$, $~0.85\times$ at $4096^2$) but faster for smaller
+ones ($~1.3\times$ at $1024^2$). The reason is the $K^2 = 9$ passes over the
+output: for a $2048\times2048$ image the output is 16\,MB, which does not fit
+in L2 or L3, so each pass causes cache misses when re-reading the output to
+accumulate. The naive loop touches each output element exactly once (completing
+it before moving on), so it has far fewer output reads. At smaller image sizes
+the output fits in cache, the $K^2$ passes stay resident, and the unit-stride
+access pattern of the reorder pays off.
 
 \subsection{Loop Unrolling}
-\begin{todobox}[Motivation]
-    What was unrolled (the reordered inner loop over output columns) and why
-    (expose ILP, hide FP latency).
-\end{todobox}
+
+\texttt{conv\_unroll} keeps the same $oy \to ox \to ky \to kx$ loop order as
+\texttt{conv\_naive} but unrolls the $ox$ loop by a factor of 4, processing
+four output pixels per outer iteration. Each of the four pixels gets its own
+accumulator (\texttt{acc0}--\texttt{acc3}) that accumulates independently
+over the $K^2$ kernel values. Because these accumulators are independent of
+each other, the CPU can do multiple add operations simultaneously, hiding the latency.
 
 \subsubsection*{Considerations}
-\begin{todobox}[Considerations]
-    Unroll factor chosen; no remainder tail needed since \texttt{W \% 8 == 0}.
-\end{todobox}
+
+The unroll factor is 4. Since $W$ is a multiple of 8, it is also a multiple
+of 4, so no remainder tail is needed. Unlike the reordered version, each
+output pixel is completed before moving to the next group, so the output
+array is written exactly once, the same as naive. There are no extra passes
+over the image and no multi-pass cache pressure.
 
 \subsubsection*{Results}
 \begin{figure}[H]
     \centering
-    \caption{Speedup of \texttt{conv\_unroll} over \texttt{conv\_naive} vs.\ image size.}
-\end{figure}
-\begin{figure}[H]
-    \centering
-    \caption{Speedup of \texttt{conv\_unroll} over \texttt{conv\_naive} vs.\ kernel size $K$.}
+    \includegraphics[width=0.88\textwidth]{task1_unroll_speedup.png}
+    \caption{Speedup of \texttt{conv\_unroll} over \texttt{conv\_naive} vs.\ image size,
+    grouped by kernel size $K$.}
+    \label{fig:unroll-speedup}
 \end{figure}
 
 \subsubsection*{Discussion}
-\begin{todobox}[Discussion]
-    Interpret the unrolling results in light of Section~2's memory-bound
-    behavior.
-\end{todobox}
+
+Because the output is written exactly once (like naive), there is no
+multi-pass cache eviction problem, and the speedup is positive across all
+tested sizes. The gain comes entirely from the CPU's instruction level parallelism: four independent accumulators
+let the CPU overlap additions instead of executing them in a latency-bound
+chain. The speedup is relatively consistent across image sizes since the
+memory access pattern is identical to naive and both are equally
+prefetcher-friendly.
 
 \section{Task 1B: Tiling}
 
@@ -368,17 +390,120 @@ is the main one. The 512-bit version is skipped as none of our CPUs supported 51
 
 \subsection{Questions}
 \begin{enumerate}[leftmargin=1.6em, itemsep=0.3em]
-    \item \textbf{Instruction count change (naive $\to$ SIMD):} report the
-    observed change and justify it.
-    \item \textbf{Speedup:} how much was achieved, what contributed to it (or
-    what limited it).
-    \item \textbf{Intrinsics used:} which SIMD intrinsics, and the justification
-    for each choice.
+    \item \textbf{Instruction count change (naive $\to$ SIMD):} The naive implementation executes about 355.5M instructions per call, whereas
+    the 256-bit SIMD implementation executes about 43.6M, roughly 8.2x fewer.\newline
+    The main reason is the vector width, one SIMD instruction processes 8 output columns at once instead of 1,
+    so the inner loop runs 8x fewer times. On top of that, the \texttt{fmadd} instruction somewhat helps by merging
+    the add and multiply instruction so that we achieve a bit more reduction in instruction size.
+    \item \textbf{Speedup:} We got a \textbf{6.35x speedup at 2048x2048, K=3}. The main contributors are the 256-bit vector operations and the \texttt{fmadd} instruction
+    "fusing" the multiply and add operations.\newline
+    The speedup is a bit lower than the instruction reduction because the cpu still needs to load 
+    the same amount of data from memory regardless of single or vector loads. At K=3, there are only 9 multiply-adds per output pixel, so there
+    isn't that much more computation relative to the data being loaded. When we increased the kernel size to 7, we saw bigger performance improvements (~7.3x).
+    Moreover, the naive implementation does sequential accesses which the hardware prefetcher handles well. 
+    \item \textbf{Intrinsics used:} The following SIMD intrinsics
+    were used:
+    \begin{itemize}[leftmargin=1.4em, itemsep=0.2em]
+        \item \texttt{\_mm256\_setzero\_ps()} - initialises the register we use for calculating the accuracy
+        to zero at the start of each column block. Cheaper than loading
+        zeros from memory and the fact that it's vectorised.
+        \item \texttt{\_mm256\_set1\_ps(ker[ky*K + kx])} - broadcasts the
+        scalar kernel weight into all 8 distinct 32-bit data parts of the 256-bit register. The weight is the same for every
+        one of the 8 output columns being computed in parallel, so broadcasting
+        once and reusing it in a vectorised manner is the best way to go about it.
+        \item \texttt{\_mm256\_loadu\_ps(ptr)} - loads 8 consecutive floats
+        from the input. The \texttt{u} (unaligned) variant is used because the
+        pointer includes an \texttt{ox\,+\,kx} offset that is not guaranteed to
+        be 32-byte aligned. This is, again, a vector memory load which helps performance.
+        \item \texttt{\_mm256\_fmadd\_ps(w, pix, acc)} - fused multiply-add:
+        computes \texttt{acc = w*pix + acc} in a single instruction instead of
+        a separate multiply and add. We use this instead of separate multiply and add functions because this
+        does it in one go instead of two different instructions and so is faster.
+        \item \texttt{\_mm256\_storeu\_ps(ptr, acc)} - writes all 8 results
+        back to the output array. One store per 8 outputs instead of 8 separate
+        scalar stores. Unaligned for the same reason as the load.
+    \end{itemize}
 \end{enumerate}
 
-\begin{todobox}[Answers]
-    Answer the three questions above using Tables~\ref{tab:simd-icount},
-    \ref{tab:simd-speedup} and Figure~\ref{fig:simd-speedup-vs-size}.
-\end{todobox}
+\section{Task 1D: Combined Optimizations}
+
+\subsection{Implementation}
+
+\texttt{conv\_optimized} combines 256-bit AVX2 SIMD with a 4-wide unroll of the
+SIMD loop, processing $4 \times 8 = 32$ output columns per outer iteration.
+Four independent \texttt{\_\_m256} accumulators (\texttt{acc0}--\texttt{acc3})
+each accumulate a separate 8-wide vector over the $K^2$ kernel iterations, and all
+four stores are issued back-to-back at the end. No output tiling is used.
+
+Several combinations were evaluated before settling on this design:
+
+\begin{itemize}[leftmargin=1.4em, itemsep=0.2em]
+    \item \textbf{Tiling only} -- essentially no speedup ($\approx 1\times$ across all sizes).
+    \item \textbf{SIMD only} -- strong but decreases with image size (memory bound).
+    \item \textbf{Tiling $+$ SIMD} -- slower than SIMD alone across all sizes.
+    \item \textbf{Tiling $+$ SIMD $+$ Unrolling} -- good, but still trails the no-tile version.
+    \item \textbf{SIMD $+$ Unrolling (chosen)} -- consistently highest speedup at every size.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task1_all_opts_vs_size.png}
+    \caption{Speedup of all optimization stages over \texttt{conv\_naive} vs.\
+    image size ($K=3$, P-core CPU~0). \texttt{conv\_optimized} is SIMD $+$ Unrolling.}
+    \label{fig:all-opts-speedup}
+\end{figure}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Stage} & \textbf{Speedup @ 2048$^2$} & \textbf{Speedup @ 4096$^2$} \\
+        \midrule
+        Loop reordering         & $\approx 1.0\times$ & $\approx 1.0\times$ \\
+        Loop unrolling          & $\approx 2.6\times$ & $\approx 2.6\times$ \\
+        Tiling ($T=64$)         & $\approx 1.0\times$ & $\approx 1.0\times$ \\
+        SIMD (256-bit)          & $\approx 7.7\times$ & $\approx 7.6\times$ \\
+        SIMD $+$ Unrolling      & $\approx 10.2\times$ & $\approx 9.3\times$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{Approximate speedup of each stage from the plot, $K=3$.}
+    \label{tab:all-opts-table}
+\end{table}
+
+\subsection{Discussion}
+
+\textbf{Why tiling does not help.}
+At $K=3$, the naive loop already reads the input in a nearly linear fashion:
+the hardware prefetcher readily handles the short stride between successive
+$3\times3$ patches, so the L1-D miss rate is already very low
+($\approx 0.13$ MPKI, as measured in Task~1B). Adding tiling disrupts
+this linear stream into short bursts with inter-tile jumps, introducing
+overhead without a corresponding cache benefit. The tiling loop nest also
+adds branch and index overhead. As a result, tiling alone gives no measurable
+speedup, and combining it with SIMD actually \emph{reduces} performance
+relative to SIMD alone (Tiling $+$ SIMD $\approx 5$--$6\times$ vs.\
+SIMD alone $\approx 7$--$11\times$).
+
+\textbf{Why SIMD $+$ Unrolling wins.}
+The 4-wide SIMD unroll (32 output columns per iteration) gives two independent
+benefits that compound:
+\begin{itemize}[leftmargin=1.4em, itemsep=0.2em]
+    \item \textbf{Vector throughput}: each \texttt{fmadd} processes 8 floats
+    at once, cutting instruction count by $\sim 8\times$.
+    \item \textbf{Parallel instructions across vectors}: the four independent accumulators give
+    the out-of-order engine four independent instructions to optimize, hiding some of the latency.
+\end{itemize}
+Together they deliver $\approx 10\times$ at 2048$^2$ and $\approx 9.3\times$
+at 4096$^2$, with a decline at large sizes because the input data is
+still streamed sequentially and the prefetcher keeps the pipeline fed.
+
+\textbf{Why the speedup decreases with image size.}
+At small sizes (128$^2$, 256$^2$) the entire input and output fit in L2/L3
+cache, and the gain is highest ($\approx 13$--$14\times$). As the image grows beyond L3 capacity
+($\sim$24\,MB at 4096$^2$), DRAM bandwidth becomes the limiting factor and
+the speedup settles to $\approx 9$--$10\times$, since vector loads from DRAM also
+saturate the memory bus in a similar manner.
 
 \end{document}

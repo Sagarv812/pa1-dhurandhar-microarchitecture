@@ -69,6 +69,8 @@ static const Stage kStages[] = {
     {"unroll", "unroll", conv_unroll, true},
     {"tile", "tile", conv_tile, true},
     {"simd", "simd", conv_simd, true},
+    {"tile+simd", "opt1", conv_tile_simd, true},
+    {"til+s+unr", "til+sim+un", conv_tile_simd_unroll, true},
     {"optimized", "optimized", conv_optimized, true},
 };
 static constexpr int kNumStages = sizeof(kStages) / sizeof(kStages[0]);

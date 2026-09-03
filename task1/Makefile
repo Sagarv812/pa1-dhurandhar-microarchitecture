@@ -16,7 +16,8 @@ LDFLAGS  :=
 BIN          := bin
 MAIN         := src/main.cpp
 STUDENT_SRC  := src/conv_naive.cpp src/conv_reorder.cpp src/conv_unroll.cpp \
-                src/conv_tile.cpp src/conv_simd.cpp src/conv_optimized.cpp
+                src/conv_tile.cpp src/conv_simd.cpp src/conv_optimized.cpp src/conv_tile_simd.cpp \
+				src/conv_tile_simd_unroll.cpp
 
 # Instructor-only: reference implementations used to calibrate/regress the tiers.
 SOLUTION_SRC := src/conv_naive.cpp solution/conv_reorder.cpp solution/conv_unroll.cpp \
