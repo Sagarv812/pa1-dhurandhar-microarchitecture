@@ -1,0 +1,477 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+
+\definecolor{primary}{HTML}{1B3A5C}
+\definecolor{accent}{HTML}{2E86AB}
+\definecolor{accent2}{HTML}{C9622A}
+\definecolor{panelbg}{HTML}{F4F6F8}
+
+\renewcommand{\arraystretch}{1.2}
+
+\titleformat{\section}
+  {\normalfont\Large\bfseries\color{primary}}
+  {\thesection}{0.6em}{}[{\color{accent}\titlerule[1.1pt]}]
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\color{primary}}
+  {\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}
+  {\normalfont\bfseries\color{accent}}
+  {\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.6em}{0.8em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.5em}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\small\color{primary}\bfseries CS683 PA-1 - Task 2}
+\fancyhead[R]{\small\color{primary}\nouppercase{\rightmark}}
+\fancyfoot[C]{\small\color{primary}\thepage}
+
+\lstdefinestyle{cmdstyle}{
+    backgroundcolor=\color{panelbg},
+    basicstyle=\ttfamily\small,
+    frame=single,
+    rulecolor=\color{accent},
+    framerule=0.6pt,
+    breaklines=true,
+    columns=fullflexible,
+    xleftmargin=4pt, xrightmargin=4pt,
+    aboveskip=8pt, belowskip=8pt,
+}
+\lstset{style=cmdstyle}
+
+\newtcolorbox{insightbox}{
+    enhanced, breakable, colback=accent!6, colframe=accent,
+    boxrule=0.8pt, arc=3pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+    fonttitle=\bfseries, coltitle=white, colbacktitle=accent,
+    title={Key Insight}, before skip=8pt, after skip=10pt,
+}
+\newtcolorbox{todobox}[1][Fill in]{
+    enhanced, breakable, colback=accent2!4, colframe=accent2!70!black,
+    boxrule=0.6pt, arc=2pt, left=8pt, right=8pt, top=5pt, bottom=5pt,
+    fonttitle=\bfseries\small, coltitle=accent2!70!black,
+    title={TODO --- #1}, before skip=6pt, after skip=10pt,
+}
+
+\usepackage[colorlinks=true,linkcolor=accent,citecolor=accent,urlcolor=accent]{hyperref}
+
+\graphicspath{{../../plots/}}
+
+\begin{document}
+
+\begin{titlepage}
+    \centering
+    \vspace*{2.2cm}
+    {\color{accent}\rule{0.5\textwidth}{1.2pt}}\\[0.6cm]
+    {\Huge\bfseries\color{primary} CS683 PA-1}\\[0.4cm]
+    {\LARGE\bfseries\color{primary} Task 2 Report}\\[0.3cm]
+    {\Large Matrix Multiplication for Inference (SGEMM)}\\[0.6cm]
+    {\color{accent}\rule{0.5\textwidth}{1.2pt}}\\[1.4cm]
+
+    {\large Software Prefetching \(\cdot\) SIMD \(\cdot\) llama.cpp Integration}\\[2cm]
+
+    \vfill
+    {\large \today}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section*{Setup}
+\addcontentsline{toc}{section}{Setup}
+
+All measurements were taken on a 13th Gen Intel Core i7-13650HX. Every build and every run was
+pinned to CPU~0, a P-core, with \texttt{taskset -c 0}. L1-D size is 48KB and line size is 64B.
+
+\section{Task 2A: Software Prefetching}
+
+\subsection{Implementation}
+
+\begin{todobox}[matmul\_prefetch design]
+Cache blocking on $M$/$N$ (block sizes, why panels then fit L1/L2), then
+\texttt{\_mm\_prefetch} hints ahead of use. State prefetch distance and
+locality hint chosen, and the \texttt{\_builtin\_prefetch} vs
+\texttt{\_mm\_prefetch} choice.
+\end{todobox}
+
+\subsection{Baseline Profiling (perf)}
+
+\begin{todobox}[cache-miss metrics]
+\texttt{perf stat} for L1D / L2 / LLC misses and \texttt{sw\_prefetch\_access}
+across matrix sizes and prefetch parameters, for naive vs prefetch.
+\end{todobox}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrrrr}
+        \toprule
+        \textbf{Config} & \textbf{L1D misses} & \textbf{L2 misses} & \textbf{LLC misses} & \textbf{sw\_prefetch} \\
+        \midrule
+        naive & --- & --- & --- & --- \\
+        prefetch & --- & --- & --- & --- \\
+        \bottomrule
+    \end{tabular}
+    \caption{Cache metrics, naive vs prefetch. \textbf{TODO: fill values.}}
+    \label{tab:t2-prefetch-perf}
+\end{table}
+
+\subsection{Speedup vs. Matrix Size}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox[c][4cm][c]{0.7\textwidth}{\centering\itshape
+    plot placeholder: \texttt{task2\_prefetch\_speedup\_vs\_size.png}}}
+    \caption{Speedup of \texttt{matmul\_prefetch} over \texttt{matmul\_naive}
+    vs.\ matrix size (cache-resident through beyond-LLC). \textbf{TODO: add plot.}}
+    \label{fig:t2-prefetch-vs-size}
+\end{figure}
+
+\subsection{Speedup vs. Prefetch Distance}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox[c][4cm][c]{0.7\textwidth}{\centering\itshape
+    plot placeholder: \texttt{task2\_prefetch\_distance.png}}}
+    \caption{Speedup vs.\ prefetch distance (in floats / cache lines) for
+    \texttt{matmul\_prefetch}. \textbf{TODO: add plot.}}
+    \label{fig:t2-prefetch-distance}
+\end{figure}
+
+\subsection{Speedup vs. Prefetch Locality Hint}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox[c][4cm][c]{0.7\textwidth}{\centering\itshape
+    plot placeholder: \texttt{task2\_prefetch\_hint.png}}}
+    \caption{Speedup for \texttt{\_MM\_HINT\_T0 / T1 / T2 / NTA} locality hints.
+    \textbf{TODO: add plot.}}
+    \label{fig:t2-prefetch-hint}
+\end{figure}
+
+\subsection{Effect of Hardware Prefetchers}
+
+\begin{todobox}[HW prefetcher on/off]
+Enable/disable hardware prefetchers (MSR 0x1A4) and report the impact on the
+SGEMM speedup and on the software-prefetch benefit.
+\end{todobox}
+
+\subsection{Questions}
+\begin{enumerate}[leftmargin=1.6em, itemsep=0.3em]
+    \item \textbf{Trend in speedup with matrix size:}
+    \begin{todobox}\end{todobox}
+    \item \textbf{Best prefetch distance:}
+    \begin{todobox}\end{todobox}
+    \item \textbf{Cache fill level (locality hint) giving maximum speedup:}
+    \begin{todobox}\end{todobox}
+    \item \textbf{L1D / L2 / LLC miss trends across sizes and parameters:}
+    \begin{todobox}\end{todobox}
+    \item \textbf{Effect of hardware prefetchers:}
+    \begin{todobox}\end{todobox}
+\end{enumerate}
+
+\section{Task 2B: SIMD (AVX2)}
+
+\subsection{Implementation}
+
+The kernel keeps the natural $i\to j\to p$ loop order but register-blocks the
+$j$ (column-of-$B$) loop by \texttt{step}${}=4$: each iteration of the inner
+loop computes four output elements $C[i][j\,..\,j{+}3]$ at once. Four
+\texttt{\_\_m256} accumulators (\texttt{acc0..acc3}) are held in registers and
+zeroed at the top of the block. The $p$ loop then advances 8 floats at a time:
+one \texttt{\_mm256\_loadu\_ps} pulls a lane of $A[i][p\,..\,p{+}7]$, which is
+reused across all four columns, and four \texttt{\_mm256\_fmadd\_ps} multiply it
+by the four $B$-row lanes and add into the accumulators. This $1\times4$
+register block amortizes the single $A$ load and the loop overhead over four
+FMAs, and the four independent accumulator chains hide the FMA latency.
+
+After the vector loop, each accumulator is reduced to a scalar by
+\texttt{hsum256} (an \texttt{extractf128} + \texttt{add} to fold the two
+128-bit halves, then two \texttt{hadd\_ps}). Remainders are handled by scalar
+cleanup: a \texttt{p < K} tail loop finishes the last $K \bmod 8$ elements into
+the same four sums, and a \texttt{j < N} tail loop handles the last
+$N \bmod 4$ columns one at a time via the scalar-tail helper \texttt{dot\_simd}.
+All loads are unaligned (\texttt{loadu}) so arbitrary \texttt{lda/ldb/ldc} are safe.
+
+\subsection{Baseline Profiling / Instruction Count}
+
+Retired user-space instructions were attributed to each kernel with
+\texttt{perf record -e instructions:u} followed by \texttt{perf report}: the
+per-call figure is the run's total event count times the kernel's overhead
+percentage, divided by the number of times the harness invokes that kernel in
+a single-stage run (naive: 1 reference + 1 warmup + 1 + 3 timed ${}={}$ 6;
+SIMD: 1 warmup + 1 + 3 ${}={}$ 5). Table~\ref{tab:t2-simd-icount} gives the
+$1024^3$ point; Fig.~\ref{fig:t2-simd-icount-vs-size} shows the full size
+sweep.
+
+The reduction is essentially size-independent, $\approx 11.8\times$ for the
+128-bit implementation and $\approx 23\times$ for the 256-bit implementation across the whole
+sweep, because it comes from the code's structure, not from cache
+behaviour. It exceeds the raw lane counts (4 and 8) because each vector
+iteration also folds a multiply and an add into one FMA and amortizes one
+$A$ load, the loop-counter arithmetic and the branch over four columns of
+output. Doubling the vector width from 128 to 256 bits roughly halves the
+count, as expected.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Kernel} & \textbf{Instr./call ($1024^3$)} & \textbf{Reduction vs naive} \\
+        \midrule
+        \texttt{matmul\_naive}          & $6.45\times10^{9}$ & 1.00$\times$ \\
+        \texttt{matmul\_simd} (128-bit)  & $5.45\times10^{8}$ & 11.8$\times$ \\
+        \texttt{matmul\_simd} (256-bit)  & $2.79\times10^{8}$ & 23.1$\times$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{Retired user-space instructions per kernel call at $M{=}N{=}K{=}1024$,
+    from \texttt{perf record}/\texttt{perf report}.}
+    \label{tab:t2-simd-icount}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task2_simd_icount_vs_size.png}
+    \caption{Instructions executed per kernel call vs.\ matrix size
+    ($M{=}N{=}K$), for \texttt{matmul\_naive}, the 128-bit SIMD kernel, and the
+    256-bit (AVX2) kernel. Per-call figures are the per-symbol instruction count
+    from \texttt{perf record} (\,\texttt{event\_count} $\times$ overhead\,\%\,)
+    divided by the number of times the harness invokes each kernel in a
+    single-stage run (naive: 6, SIMD: 5). Log scale.}
+    \label{fig:t2-simd-icount-vs-size}
+\end{figure}
+
+The 128-bit and 256-bit SIMD bars are absent at $N{=}64$: that workload runs
+in a few microseconds and \texttt{perf} collected too few samples
+(single-digit) to attribute a stable per-symbol percentage, so those points
+are dropped rather than shown as noise.
+
+\subsection{Performance}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrrr}
+        \toprule
+        \textbf{Stage} & \textbf{Time (ms)} & \textbf{GFLOP/s} & \textbf{Speedup} \\
+        \midrule
+        \texttt{matmul\_naive} (ref) & 496.506 & 4.33 & 1.00$\times$ \\
+        \texttt{matmul\_simd} (256-bit) & 92.051 & 23.33 & 5.39$\times$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{\texttt{./bin/matmul simd 1024 1024 1024 1234}. At smaller, cache-resident sizes the SIMD
+    speedup is much higher (up to 19$\times$ at $N{=}256$); see
+    Fig.~\ref{fig:t2-simd-width-vs-size}.}
+    \label{tab:t2-simd-speedup}
+\end{table}
+
+\subsection{Speedup vs. SIMD Width}
+
+The final \texttt{src/matmul\_simd.cpp} is the 256-bit SIMD implementation. Both implementations were swept over
+$M{=}N{=}K \in \{64,\dots,3072\}$ against \texttt{matmul\_naive}; the
+speedups are plotted in Fig.~\ref{fig:t2-simd-width-vs-size} and the absolute
+runtimes in Fig.~\ref{fig:t2-simd-time-vs-size}. Below $N \approx 512$ the
+problem is cache-resident and the wider register roughly doubles the speedup
+(19$\times$ vs 8$\times$ at $N{=}256$); beyond the L2/L3 capacity both kernels
+become memory-bound and converge to $\approx 4$--$5\times$, where vector width
+no longer matters.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task2_simd_speedup_vs_size.png}
+    \caption{Speedup of \texttt{matmul\_simd} over \texttt{matmul\_naive} vs.\
+    matrix size ($M{=}N{=}K$), for the 128-bit and 256-bit SIMD
+    kernels.}
+    \label{fig:t2-simd-width-vs-size}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task2_simd_time_vs_size.png}
+    \caption{Kernel execution time (ms, log scale) vs.\ matrix size
+    ($M{=}N{=}K$). Same runs as
+    Fig.~\ref{fig:t2-simd-width-vs-size}.}
+    \label{fig:t2-simd-time-vs-size}
+\end{figure}
+
+\begin{table}[H]
+    \centering
+    \scriptsize
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{ll ccccccccccc}
+        \toprule
+        & & \multicolumn{11}{c}{\textbf{Matrix size} $N$ ($M{=}N{=}K$)} \\
+        \cmidrule(lr){3-13}
+        \textbf{SIMD width} & \textbf{Metric} & 64 & 128 & 192 & 256 & 384 & 512 & 768 & 1024 & 1536 & 2048 & 3072 \\
+        \midrule
+        \multirow{2}{*}{No SIMD (\texttt{matmul\_naive})}
+          & Instructions/call & $1.52{\times}10^{6}$ & $1.25{\times}10^{7}$ & $4.31{\times}10^{7}$ & $1.02{\times}10^{8}$ & $3.41{\times}10^{8}$ & $8.08{\times}10^{8}$ & $2.72{\times}10^{9}$ & $6.45{\times}10^{9}$ & $2.18{\times}10^{10}$ & $5.16{\times}10^{10}$ & $1.74{\times}10^{11}$ \\
+          & Time (ms) & 0.177 & 1.778 & 8.598 & 8.934 & 21.990 & 59.789 & 201.384 & 496.506 & 1707.046 & 4249.303 & 14687.692 \\
+        \addlinespace
+        \multirow{3}{*}{128-bit (SSE)}
+          & Instructions/call & --- & $1.15{\times}10^{6}$ & $3.20{\times}10^{6}$ & $9.07{\times}10^{6}$ & $2.92{\times}10^{7}$ & $6.93{\times}10^{7}$ & $2.31{\times}10^{8}$ & $5.45{\times}10^{8}$ & $1.83{\times}10^{9}$ & $4.32{\times}10^{9}$ & $1.46{\times}10^{10}$ \\
+          & Time (ms) & 0.056 & 0.395 & 0.844 & 0.843 & 3.362 & 9.502 & 40.829 & 93.164 & 312.891 & 854.104 & 3699.584 \\
+          & Speedup vs.\ No SIMD & 6.03$\times$ & 5.51$\times$ & 8.57$\times$ & 8.04$\times$ & 6.61$\times$ & 6.38$\times$ & 5.20$\times$ & 5.26$\times$ & 5.33$\times$ & 4.84$\times$ & 3.98$\times$ \\
+        \addlinespace
+        \multirow{3}{*}{256-bit (AVX2)}
+          & Instructions/call & --- & $6.73{\times}10^{5}$ & $1.77{\times}10^{6}$ & $5.17{\times}10^{6}$ & $1.62{\times}10^{7}$ & $3.61{\times}10^{7}$ & $1.19{\times}10^{8}$ & $2.79{\times}10^{8}$ & $9.30{\times}10^{8}$ & $2.19{\times}10^{9}$ & $7.34{\times}10^{9}$ \\
+          & Time (ms) & 0.022 & 0.162 & 0.510 & 0.468 & 1.858 & 6.075 & 38.203 & 92.051 & 354.612 & 843.911 & 3590.953 \\
+          & Speedup vs.\ No SIMD & 7.95$\times$ & 10.94$\times$ & 16.88$\times$ & 19.08$\times$ & 11.84$\times$ & 9.84$\times$ & 5.27$\times$ & 5.39$\times$ & 4.81$\times$ & 5.04$\times$ & 4.09$\times$ \\
+        \bottomrule
+    \end{tabular}}
+    \caption{Instructions/call, kernel time, and speedup vs.\ matrix size, for each SIMD
+    width. Instructions/call are retired user-space instructions from
+    \texttt{perf record}/\texttt{perf report} (per-call = event count $\times$ overhead\%
+    divided by harness call count); times are the code's median
+    function-only \texttt{time(ms)}, not whole process \texttt{perf stat} time. Same source data as
+    Table~\ref{tab:t2-simd-icount}, Fig.~\ref{fig:t2-simd-icount-vs-size},
+    Fig.~\ref{fig:t2-simd-width-vs-size}, and Fig.~\ref{fig:t2-simd-time-vs-size}.}
+    \label{tab:t2-simd-summary}
+\end{table}
+
+\subsection{Questions}
+\begin{enumerate}[leftmargin=1.6em, itemsep=0.3em]
+    \item \textbf{Instruction count change (naive $\to$ SIMD):}
+    Retired instructions per function call drop by about $11.8\times$ for the
+    128-bit implementation and $23\times$ for the 256-bit implementation, roughly constant
+    across matrix size (Table~\ref{tab:t2-simd-icount},
+    Fig.~\ref{fig:t2-simd-icount-vs-size}). This exceeds the raw lane counts
+    (4 and 8) for two reasons: each \texttt{fmadd} replaces a separate
+    multiply and add, and the $1\times4$ register block issues one $A$ load
+    plus one set of loop-counter/branch instructions per four FMAs instead of
+    per one. The count halves cleanly from 128 to 256 bits because the work
+    per instruction doubles while the loop structure is identical.
+
+    \item \textbf{Trends across matrix size $\times$ SIMD width; which width
+    gives max speedup:}
+    For cache-resident sizes ($N \lesssim 512$) speedup rises with $N$ and
+    scales with vector width, peaking at $N{=}256$: $19.1\times$ for 256-bit
+    and $8.0\times$ for 128-bit. Here the code is compute-bound, so halving
+    the instruction count with a wider register directly halves the runtime.
+    As $N$ grows past the L2/L3 capacity the $N\times K$ floats
+    no longer fits and the function streams it from memory on every
+    row of $A$; both widths become memory-bound and converge to
+    $\approx 4$--$5\times$, where SIMD width stops mattering. So 256-bit
+    gives the maximum speedup at every size, but its advantage over
+    128-bit shrinks from $\sim 2\times$ to negligible as the workload leaves
+    cache.
+\end{enumerate}
+
+
+\section{Task 2C: Software Prefetching + SIMD (Combined / Optimized)}
+
+\subsection{Implementation}
+
+\begin{todobox}[matmul\_optimized design]
+Everything combined: loop reordering, register blocking + unrolling, AVX2
+micro-kernel, cache tiling, and software prefetch. Give the final block sizes,
+micro-kernel shape, prefetch distance/hint, and the tuning process. Note
+arbitrary $M/N/K/lda/ldb/ldc$ handling (scalar tails) since this kernel is
+injected into llama.cpp.
+\end{todobox}
+
+\subsection{Combinations Evaluated}
+
+\begin{itemize}[leftmargin=1.4em, itemsep=0.2em]
+    \item \textbf{TODO:} SIMD only --- \dots
+    \item \textbf{TODO:} SIMD + tiling --- \dots
+    \item \textbf{TODO:} SIMD + tiling + prefetch --- \dots
+    \item \textbf{TODO:} SIMD + tiling + prefetch + unroll (chosen) --- \dots
+\end{itemize}
+
+\subsection{Final Performance Summary}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox[c][4cm][c]{0.8\textwidth}{\centering\itshape
+    plot placeholder: \texttt{task2\_all\_opts\_vs\_size.png}}}
+    \caption{Speedup of \texttt{matmul\_simd}, \texttt{matmul\_prefetch}, and
+    \texttt{matmul\_optimized} over \texttt{matmul\_naive} vs.\ matrix size
+    ($M{=}N{=}K$, 128 through 2048+). \textbf{TODO: add plot.}}
+    \label{fig:t2-all-opts-vs-size}
+\end{figure}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Stage} & \textbf{Speedup @ 1024$^3$} & \textbf{Speedup @ 2048$^3$} \\
+        \midrule
+        \texttt{matmul\_simd}      & --- & --- \\
+        \texttt{matmul\_prefetch}  & --- & --- \\
+        \texttt{matmul\_optimized} & --- & --- \\
+        \bottomrule
+    \end{tabular}
+    \caption{Speedup of each stage. \textbf{TODO: fill values.}}
+    \label{tab:t2-all-opts-table}
+\end{table}
+
+\subsection{Harness Score}
+
+\begin{todobox}[./bin/matmul output]
+Paste the graded table and TOTAL from a full \texttt{./bin/matmul} run; state
+which tier \texttt{matmul\_optimized} reaches.
+\end{todobox}
+
+\subsection{Discussion}
+
+\begin{todobox}[why each technique helps / does not]
+Why SIMD before tiling (compute-bound $\to$ memory-bound); why cache blocking
+becomes decisive once the kernel is fast; why prefetch adds on top; why the
+speedup varies with matrix size relative to L1/L2/LLC capacity.
+\end{todobox}
+
+\section{llama.cpp Integration}
+
+\subsection{Setup}
+
+\begin{todobox}[make llama-demo]
+Pinned tag \texttt{b5731}, \texttt{stories260K.gguf} (F32), single-thread,
+injection path (\texttt{inject.py} patches
+\texttt{ggml\_compute\_forward\_mul\_mat}; \texttt{ggml\_student\_sgemm.cpp}
+adapts the kernel; A/B swap via dot-product symmetry).
+\end{todobox}
+
+\subsection{Results}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Metric} & \textbf{llama.cpp native} & \textbf{student kernel} \\
+        \midrule
+        Kernel used marker seen & --- & --- \\
+        Output matches stock (token-for-token) & \multicolumn{2}{c}{---} \\
+        Prompt-eval tokens/sec & --- & --- \\
+        Generation tokens/sec & --- & --- \\
+        \bottomrule
+    \end{tabular}
+    \caption{\texttt{make llama-demo} comparison. \textbf{TODO: fill values.}}
+    \label{tab:t2-llama}
+\end{table}
+
+\subsection{Discussion}
+
+\begin{todobox}[interpret llama.cpp numbers]
+Compare prompt-eval (batched, fast path) vs generation ($M{=}1$, scalar tail).
+Why the student kernel does / does not beat ggml's native matmul.
+\end{todobox}
+
+\end{document}
