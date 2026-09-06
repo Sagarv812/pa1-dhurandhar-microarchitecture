@@ -513,32 +513,35 @@ no longer matters.
 
 \subsection{Implementation}
 
-\begin{todobox}[matmul\_optimized design]
-Everything combined: loop reordering, register blocking + unrolling, AVX2
-micro-kernel, cache tiling, and software prefetch. Give the final block sizes,
-micro-kernel shape, prefetch distance/hint, and the tuning process. Note
-arbitrary $M/N/K/lda/ldb/ldc$ handling (scalar tails) since this kernel is
-injected into llama.cpp.
-\end{todobox}
+\texttt{matmul\_optimized} tiles $N$ into blocks of $T=96$ columns of $B$. Within a
+tile it uses $4\times3$ SIMD "array" (4 rows of $A$
+$\times$ 3 columns of $B$, 12 \texttt{\_\_m256} accumulators) with two
+manually-unrolled $K$-steps of 8 floats each (16 floats/iteration) before a
+scalar tail. Software prefetch (\texttt{\_MM\_HINT\_T0}, distance $64$
+floats, same as Task 2A) is issued on the 3 active $B$ rows only, since $B$ is
+re-streamed once per internal loop iteration while the 4 $A$ rows are reused across
+all $j$ in a tile and mostly stay resident. Arbitrary $M/N/K/lda/ldb/ldc$ are
+handled with scalar fallback loops on every edge: a $1$-row tail when $M \bmod
+4 \ne 0$, a $1$-column tail when a $T$-tile's width isn't a multiple of 3, and
+a scalar-with-AVX2-dot-product tail on $K \bmod 8$. Block size and unroll
+depth were tuned by sweeping $T$ on $N{=}1024,2048$.
+$T=96$ (a multiple of the $4\times3$ tile) and the $4\times3$ shape were
+chosen because they exactly saturate the 16 available SIMD registers with
+no spilling: the inner loop keeps 12 accumulators + 3 live $B$ vectors + 1
+reused $A$ vector $= 16$ registers live at once.
 
-\subsection{Combinations Evaluated}
-
-\begin{itemize}[leftmargin=1.4em, itemsep=0.2em]
-    \item \textbf{TODO:} SIMD only --- \dots
-    \item \textbf{TODO:} SIMD + tiling --- \dots
-    \item \textbf{TODO:} SIMD + tiling + prefetch --- \dots
-    \item \textbf{TODO:} SIMD + tiling + prefetch + unroll (chosen) --- \dots
-\end{itemize}
 
 \subsection{Final Performance Summary}
 
+$N\in\{128,256,512,1024,1536,2048,3072\}$, seed $1234$. Speedup is each stage
+vs.\ \texttt{matmul\_naive} on the same workload.
+
 \begin{figure}[H]
     \centering
-    \fbox{\parbox[c][4cm][c]{0.8\textwidth}{\centering\itshape
-    plot placeholder: \texttt{task2\_all\_opts\_vs\_size.png}}}
+    \includegraphics[width=0.75\textwidth]{task2_all_opts_vs_size.png}
     \caption{Speedup of \texttt{matmul\_simd}, \texttt{matmul\_prefetch}, and
     \texttt{matmul\_optimized} over \texttt{matmul\_naive} vs.\ matrix size
-    ($M{=}N{=}K$, 128 through 2048+). \textbf{TODO: add plot.}}
+    (log-log).}
     \label{fig:t2-all-opts-vs-size}
 \end{figure}
 
@@ -548,29 +551,69 @@ injected into llama.cpp.
         \toprule
         \textbf{Stage} & \textbf{Speedup @ 1024$^3$} & \textbf{Speedup @ 2048$^3$} \\
         \midrule
-        \texttt{matmul\_simd}      & --- & --- \\
-        \texttt{matmul\_prefetch}  & --- & --- \\
-        \texttt{matmul\_optimized} & --- & --- \\
+        \texttt{matmul\_simd}      & $5.90\times$  & $5.79\times$  \\
+        \texttt{matmul\_prefetch}  & $1.37\times$  & $1.33\times$  \\
+        \texttt{matmul\_optimized} & $23.81\times$ & $22.74\times$ \\
         \bottomrule
     \end{tabular}
-    \caption{Speedup of each stage. \textbf{TODO: fill values.}}
+    \caption{Speedup of each stage (median of 2 repeats).}
     \label{tab:t2-all-opts-table}
 \end{table}
 
-\subsection{Harness Score}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task2c_cache_metrics.png}
+    \caption{L1D / L2 / LLC miss counts and \texttt{sw\_prefetch\_access.any}
+    vs.\ matrix size, one line per stage (raw \texttt{perf stat} counts, log-log).}
+    \label{fig:t2-all-opts-cache}
+\end{figure}
 
-\begin{todobox}[./bin/matmul output]
-Paste the graded table and TOTAL from a full \texttt{./bin/matmul} run; state
-which tier \texttt{matmul\_optimized} reaches.
-\end{todobox}
+\subsection{Final Score}
+
+Full graded run (\texttt{./bin/matmul}, default $N{=}1024$, seed $1234$):
+
+\begin{verbatim}
+stage           correct    time(ms)     GFLOP/s    speedup
+--------------------------------------------------------------
+naive (ref)     yes         518.481        4.14      1.00x
+simd            yes          83.772       25.63      6.19x
+prefetch        yes         376.951        5.70      1.38x
+optimized       yes          22.284       96.37     23.27x
+--------------------------------------------------------------
+correctness : 30 / 30   (3 of 3 stages correct)
+optimized   : 23.27x  ->  55 / 70  speedup points
+TOTAL       : 85 / 100
+\end{verbatim}
 
 \subsection{Discussion}
 
-\begin{todobox}[why each technique helps / does not]
-Why SIMD before tiling (compute-bound $\to$ memory-bound); why cache blocking
-becomes decisive once the kernel is fast; why prefetch adds on top; why the
-speedup varies with matrix size relative to L1/L2/LLC capacity.
-\end{todobox}
+SIMD comes before tiling because the naive/scalar loop is compute-bound (a
+single dependent FMA chain per $(i,j)$ over $K$): with nothing to overlap,
+cache blocking cannot show a benefit until the inner loop is fast enough to
+be memory-bound instead. This is visible in \texttt{matmul\_prefetch}
+(scalar, tiled, prefetched): it fixes the memory side but stays compute-bound
+at scalar throughput, so its speedup is a flat $\sim 1.34\times$ regardless
+of size. Tiling and prefetch have nothing left to hide once the loop
+itself is the bottleneck.
+
+\texttt{matmul\_simd} shows the opposite failure: fast compute, but no tiling. Its speedup collapses from $\sim 13$--$15\times$ at $N
+\le 256$ (fits in L2/L3) to $\sim 4$--$6\times$ at $N \ge 1024$, matching the
+cache-metrics plot: L1D and LLC misses for \texttt{matmul\_simd} grow far faster
+with $N$ than for \texttt{matmul\_optimized} or \texttt{matmul\_prefetch} (e.g.\
+at $N{=}2048$, LLC misses are $101$M for \texttt{simd} vs.\ $4.2$M for
+\texttt{optimized} and $1.8$M for \texttt{prefetch}). With no tiling, $B$ is
+re-streamed from memory on every row of $A$ once it no longer fits in cache.
+
+\texttt{matmul\_optimized} combines both fixes and inherits the best of each:
+SIMD throughput plus \texttt{matmul\_prefetch}-level cache
+behavior from the $N$-tiling, so its speedup stays flat at $\sim 22$--$24\times$
+for $N \ge 512$ instead of decaying like \texttt{matmul\_simd}. Prefetch adds a
+further, smaller margin on top by hiding the residual DRAM latency on the 3
+active $B$ rows per internal loop iteration. \texttt{sw\_prefetch\_access.any} is
+essentially zero for \texttt{matmul\_simd} (no explicit prefetch) and large for
+both \texttt{matmul\_prefetch} and \texttt{matmul\_optimized}, confirming it is
+this issued-prefetch traffic, not incidental hardware prefetching, driving the
+gap.
 
 \section{llama.cpp Integration}
 
