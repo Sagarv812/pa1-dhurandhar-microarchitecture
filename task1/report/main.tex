@@ -187,11 +187,7 @@ prefetcher-friendly.
 
 \subsection{Baseline Profiling}
 
-The CPU we used to run is an Intel hybrid P-core/E-core design. The L1d cache
-size, as seen by doing \texttt{cat /sys/devices/system/cpu/cpu0/cache/index0/size},
-came out to be 48\,KB for the P-core, and 32\,KB for the E-core. All
-measurements below were taken while running on a P-core (CPU 0) with
-\texttt{taskset}, so the L1d size for this baseline is \textbf{48\,KB}.
+The CPU we used to run is the same as Task 1A. Again, all were run on core 0 (P-core).
 
 \begin{lstlisting}[language=bash]
 taskset -c 0 perf stat -r 5 \
@@ -227,7 +223,8 @@ taskset -c 0 perf stat -r 5 \
     and the same $3\times3$ kernel it already used one pixel ago. All of
     that easily fits into the cache. So even though we loop through the entire 16\,MB image over the course of the run, at
     any given moment it's only really touching a small, reused patch of
-    memory. Hence, we don't get as many misses in this case.
+    memory. Hence, we don't get as many misses in this case. The naive implementation, since it has sequential accesses,
+    is also pretty hardware prefetcher friendly so that also contributes to a low MPKI.
 \end{insightbox}
 
 \subsection{Tiled Implementation}
@@ -257,8 +254,7 @@ in L1-D instead of being re-swept from DRAM $K \times K$ times like
     \label{tab:tile-sweep}
 \end{table}
 
-$T=64$ is fastest and fits the 48\,KB L1-D ($\approx 33.4$\,KB working set),
-so it's what's committed in \texttt{conv\_tile.cpp}.
+$T=64$ is fastest and fits the 48\,KB L1-D ($\approx 33.4$\,KB working set).
 
 \begin{insightbox}
     Fastest ($T=64$) isn't the same as fewest misses ($T=8$, MPKI
@@ -273,8 +269,8 @@ so it's what's committed in \texttt{conv\_tile.cpp}.
 \subsection{Metrics and Plots}
 
 We swept image size $\in \{128, 256, 512, 1024, 2048, 4096\}$ ($K=3$) for
-three tile sizes -- $T=8$ (best MPKI), $T=24$ (worst, mid conflict-miss zone),
-and $T=64$ (committed) -- against the naive baseline:
+three tile sizes: $T=8$ (best MPKI), $T=24$ (worst, mid conflict-miss zone),
+and $T=64$, against the naive baseline:
 
 \begin{figure}[H]
     \centering
@@ -304,11 +300,11 @@ and $T=64$ (committed) -- against the naive baseline:
     But larger tile sizes introduce vertical memory jumps that exceed cache capacity, causing misses and moreover, it isn't prefetcher friendly.
 
     \item \textbf{Speedup achieved:} Speedup was achieved only for larger tile sizes (> 24) with the sweet spot being $T=64$.
-    The performance improved despite high L1-D misses, indicating that tiling successfully improved temporal locality was improved which led to lower latency even
+    The performance improved despite high L1-D misses, indicating that tiling successfully improved temporal locality which led to lower latency even
     if L1-D misses made it fetch data from LLC. This could be because we don't have to go to L3 or DRAM to fetch something we use in a "short" span of time
     because we reuse that data often (temporal locality). Also the number of instructions of tiling is about half
     that of the naive implementation so that is also a factor which contributes to the speedup.
-    One of the ways to make this even more efficient could be loop unrolling (to abuse spacial locality further).
+    One of the ways to make this even more efficient could be loop unrolling (to abuse spacial locality along with temporal).
 \end{enumerate}
 
 \section{Task 1C: SIMD}
@@ -364,7 +360,7 @@ reduction), essentially the 8-wide vector width.
         \toprule
         \textbf{Stage} & \textbf{Time (ms)} & \textbf{GFLOP/s} & \textbf{Speedup} \\
         \midrule
-        \texttt{conv\_naive} (ref) & 14.779 & 5.11   & 1.00$\times$ \\
+        \texttt{conv\_naive} & 14.779 & 5.11   & 1.00$\times$ \\
         \texttt{conv\_simd} (256-bit) & 2.327 & 32.44 & 6.35$\times$ \\
         \bottomrule
     \end{tabular}
@@ -384,7 +380,7 @@ is the main one. The 512-bit version is skipped as none of our CPUs supported 51
     \centering
     \includegraphics[width=0.75\textwidth]{task1_simd_speedup_vs_size.png}
     \caption{Speedup of \texttt{conv\_simd} over \texttt{conv\_naive} vs.\ matrix
-    size, one line per SIMD width ($K=3$, P-core CPU 0).}
+    size, one line per SIMD width ($K=3$).}
     \label{fig:simd-speedup-vs-size}
 \end{figure}
 
@@ -429,7 +425,7 @@ is the main one. The 512-bit version is skipped as none of our CPUs supported 51
 
 \subsection{Implementation}
 
-\texttt{conv\_optimized} combines 256-bit AVX2 SIMD with a 4-wide unroll of the
+\texttt{conv\_optimized} combines 256-bit SIMD with a 4-wide unroll of the
 SIMD loop, processing $4 \times 8 = 32$ output columns per outer iteration.
 Four independent \texttt{\_\_m256} accumulators (\texttt{acc0}--\texttt{acc3})
 each accumulate a separate 8-wide vector over the $K^2$ kernel iterations, and all
@@ -438,11 +434,11 @@ four stores are issued back-to-back at the end. No output tiling is used.
 Several combinations were evaluated before settling on this design:
 
 \begin{itemize}[leftmargin=1.4em, itemsep=0.2em]
-    \item \textbf{Tiling only} -- essentially no speedup ($\approx 1\times$ across all sizes).
-    \item \textbf{SIMD only} -- strong but decreases with image size (memory bound).
-    \item \textbf{Tiling $+$ SIMD} -- slower than SIMD alone across all sizes.
-    \item \textbf{Tiling $+$ SIMD $+$ Unrolling} -- good, but still trails the no-tile version.
-    \item \textbf{SIMD $+$ Unrolling (chosen)} -- consistently highest speedup at every size.
+    \item \textbf{Tiling only} - essentially no speedup ($\approx 1\times$ across all sizes).
+    \item \textbf{SIMD only} - strong but decreases with image size (memory bound).
+    \item \textbf{Tiling $+$ SIMD} - slower than SIMD alone across all sizes.
+    \item \textbf{Tiling $+$ SIMD $+$ Unrolling} - good, but still trails the no-tile version.
+    \item \textbf{SIMD $+$ Unrolling (chosen)} - consistently highest speedup at every size.
 \end{itemize}
 
 \subsection{Results}
