@@ -1,0 +1,43 @@
+# 1 . 4 x 4 K ?
+
+This is the single reason your 3×4 kernel hit
+ ~20x while the current merge only gets ~7.6x. 
+ Right now, for each (i,j), you load a[p..p+15] fresh 
+ and use it for exactly one dot product against b.
+If instead you process 4 columns of B at once for the same
+row of A, you load a once and reuse it across 4 independent FMA chains:
+
+
+This is the 1×4 version, not yet the 3×4 — you're only reusing the A-load across 4 columns of B, not also across multiple rows of A. That's why you're at ~9.7x rather than the ~20x your old 3×4 kernel hit — row-blocking (processing e.g. 3 rows of A against these same 4 B-columns before moving on) would let you reuse the B-loads too, on top of the A-load reuse you already have. That's suggestion #1's other half, still on the table if you want to push further.
+Suggestions #2 (hsum via _mm_hadd_ps instead of store-to-array) and #3 (drop the per-iteration prefetch branch) are both still open — they're small, safe additions on top of what you just built, and don't require restructuring anything.
+
+
+ Row-blocking — process multiple rows of A against the same 4 B-columns (biggest remaining lever)
+Right now you reuse the A-load across 4 B-columns (1×4 blocking), but every row i still reloads b0..b3 from scratch, even though the same b0..b3 get used again on the very next i within this jb tile. If you process, say, 2 or 3 rows of A together against the same 4 B-columns, you reuse the B-loads too:
+
+
+for (int i = ib; i + 2 <= i_end; i += 2) {
+    const float* a0 = A + (long)i * lda;
+    const float* a1 = A + (long)(i+1) * lda;
+    float* c0 = C + (long)i * ldc;
+    float* c1 = C + (long)(i+1) * ldc;
+
+    for (int j = jb; j < j_end; j += 4) {
+        const int cols = ...;
+        const float* b0 = ...; // same as now
+        __m256 acc00=..., acc01=..., acc02=..., acc03=...;  // row 0
+        __m256 acc10=..., acc11=..., acc12=..., acc13=...;  // row 1
+
+        for (p...) {
+            __m256 va0 = _mm256_loadu_ps(a0+p);
+            __m256 va1 = _mm256_loadu_ps(a1+p);
+            __m256 vb0 = _mm256_loadu_ps(b0+p);   // loaded ONCE, used by both rows
+            acc00 = _mm256_fmadd_ps(va0, vb0, acc00);
+            acc10 = _mm256_fmadd_ps(va1, vb0, acc10);
+            // ...repeat for b1,b2,b3
+        }
+        // hsum all 8 accumulators, write to c0[j..j+3] and c1[j..j+3]
+    }
+}
+// leftover single row if i_end-ib is odd, using your current 1x4 path
+This is exactly what your old 3×4 kernel did (which hit ~20x) — going to 2×4 (8 accumulators + a few temporaries, comfortably within AVX2's 16 YMM registers) is a good middle step; 3×4 (12 accumulators) is the fuller version if you want to push further. This cuts B-loads in half (2×4) or to a third (3×4), and gives you more independent accumulator chains for the CPU to interleave — same latency-hiding benefit as before, just extended across rows too.

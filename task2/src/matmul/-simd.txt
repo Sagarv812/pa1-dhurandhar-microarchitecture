@@ -1,0 +1,8 @@
+Why 2 accumulators ?
+
+
+There's exactly one accumulator (acc) for the whole dot product, and every iteration's FMA depends on the previous iteration's acc — a strict serial chain. vfmadd has a latency of ~4–5 cycles on this CPU, so even though the core can issue an FMA every cycle, it can't issue the next one in this chain until the previous one's result is ready. That's a hard floor of ~4–5 cycles between useful FMAs, no matter how fast the hardware is.
+
+The numbers confirm it: naive's own instructions-per-cycle is 2.97 (healthy), but isolate simd's own contribution and its IPC drops to 1.59 — despite doing ~9x fewer total instructions than naive (vectorization is working as intended), it's burning far more cycles per useful instruction than it should. Concretely: this workload needs 134.2M FMA vector-ops; at even a conservative 1-FMA/cycle rate that's 134.2M cycles, but simd actually spends 448.6M cycles — 3.3x more than the 1-port ideal, 6.7x more than a 2-port ideal. Those extra cycles are the core sitting idle waiting for the previous FMA's result.
+
+Why it's not saved by the compiler/hardware automatically: different j iterations are independent (no dependency between them), so in principle out-of-order execution could overlap the FMA chain of the next j with the current one. But each j's p-loop is K/8 = 128 iterations deep — that's ~128 FMAs plus loads/branches in flight before the OOO window could even start the next j, which is almost certainly wider than this CPU's reorder buffer can absorb. So in practice you get very little cross-iteration overlap, and the serial 4–5-cycle-per-FMA chain dominates.

@@ -1,153 +1,175 @@
-
-// matmul_optimized.cpp  STAGE 3: PUT IT ALL TOGETHER
-//
-// This is the graded function AND the kernel that gets injected into llama.cpp. Combine
-// everything you have learned across the whole assignment  loop reordering, register
-// blocking and unrolling (Task 1 / Stage 1 here), cache tiling and software prefetch
-// (Stage 2)  and TUNE it to be as fast as you can. Your speedup over matmul_naive determines
-// your score (see the tier table the harness prints), and this same function will power a
-// real LLM inference via `make llama-demo`.
-
 #include <immintrin.h>
 
 #include "matmul.h"
 
-static float hsum256(__m256 v){
-    __m128 lo = _mm256_castps256_ps128(v);
-    __m128 hi = _mm256_extractf128_ps(v, 1);
-    lo = _mm_add_ps(lo, hi);
-    lo = _mm_hadd_ps(lo, lo);
-    lo = _mm_hadd_ps(lo, lo);
-    return _mm_cvtss_f32(lo);
+static inline float horizontal_sum(__m256 value) {
+    __m128 sum = _mm_add_ps(_mm256_castps256_ps128(value),
+                            _mm256_extractf128_ps(value, 1));
+    sum = _mm_hadd_ps(sum, sum);
+    sum = _mm_hadd_ps(sum, sum);
+    return _mm_cvtss_f32(sum);
 }
 
-static float dot_prefetch(const float* a, const float* b, int length, int prefetch_dist){
+static inline void compute_one_row(const float* a, float* c_row,
+                                   const float* b0, const float* b1,
+                                   const float* b2, const float* b3,
+                                   int cols, int K, int column) {
+    __m256 accumulators[4] = {
+        _mm256_setzero_ps(), _mm256_setzero_ps(),
+        _mm256_setzero_ps(), _mm256_setzero_ps()};
     int p = 0;
-    __m256 acc = _mm256_setzero_ps();
-    for(; p + 8 <= length ; p+=8){
-        if(p+ prefetch_dist < length){
-            _mm_prefetch(reinterpret_cast<const char*>(a + p + prefetch_dist) , _MM_HINT_T0);
-            _mm_prefetch(reinterpret_cast<const char*>(b + p + prefetch_dist) , _MM_HINT_T0);
-        }
-        acc = _mm256_fmadd_ps(_mm256_loadu_ps(a+p) , _mm256_loadu_ps(b+p), acc);
+
+    for (; p + 8 <= K; p += 8) {
+        const __m256 va = _mm256_loadu_ps(a + p);
+        accumulators[0] = _mm256_fmadd_ps(va, _mm256_loadu_ps(b0 + p), accumulators[0]);
+        if (cols > 1)
+            accumulators[1] = _mm256_fmadd_ps(va, _mm256_loadu_ps(b1 + p), accumulators[1]);
+        if (cols > 2)
+            accumulators[2] = _mm256_fmadd_ps(va, _mm256_loadu_ps(b2 + p), accumulators[2]);
+        if (cols > 3)
+            accumulators[3] = _mm256_fmadd_ps(va, _mm256_loadu_ps(b3 + p), accumulators[3]);
     }
-    float result = hsum256(acc);
-    for(; p < length ; p++){
-        result += a[p] * b[p];
+
+    const float* b_rows[4] = {b0, b1, b2, b3};
+    for (int col = 0; col < cols; ++col) {
+        float sum = horizontal_sum(accumulators[col]);
+        for (int tail = p; tail < K; ++tail)
+            sum += a[tail] * b_rows[col][tail];
+        c_row[column + col] = sum;
     }
-    return result;
 }
 
-void matmul_optimized(const float* A, const float* B, float* C,
+static inline void compute_two_rows(const float* a0, const float* a1,
+                                    float* c0, float* c1,
+                                    const float* b0, const float* b1,
+                                    const float* b2, const float* b3,
+                                    int cols, int K, int column) {
+    __m256 acc00 = _mm256_setzero_ps(), acc01 = _mm256_setzero_ps();
+    __m256 acc02 = _mm256_setzero_ps(), acc03 = _mm256_setzero_ps();
+    __m256 acc10 = _mm256_setzero_ps(), acc11 = _mm256_setzero_ps();
+    __m256 acc12 = _mm256_setzero_ps(), acc13 = _mm256_setzero_ps();
+
+    int p = 0;
+    for (; p + 8 <= K; p += 8) {
+        const __m256 va0 = _mm256_loadu_ps(a0 + p);
+        const __m256 va1 = _mm256_loadu_ps(a1 + p);
+        const __m256 vb0 = _mm256_loadu_ps(b0 + p);
+        acc00 = _mm256_fmadd_ps(va0, vb0, acc00);
+        acc10 = _mm256_fmadd_ps(va1, vb0, acc10);
+        if (cols > 1) { const __m256 vb1 = _mm256_loadu_ps(b1 + p); acc01 = _mm256_fmadd_ps(va0, vb1, acc01); acc11 = _mm256_fmadd_ps(va1, vb1, acc11); }
+        if (cols > 2) { const __m256 vb2 = _mm256_loadu_ps(b2 + p); acc02 = _mm256_fmadd_ps(va0, vb2, acc02); acc12 = _mm256_fmadd_ps(va1, vb2, acc12); }
+        if (cols > 3) { const __m256 vb3 = _mm256_loadu_ps(b3 + p); acc03 = _mm256_fmadd_ps(va0, vb3, acc03); acc13 = _mm256_fmadd_ps(va1, vb3, acc13); }
+    }
+
+    __m256 accumulators0[4] = {acc00, acc01, acc02, acc03};
+    __m256 accumulators1[4] = {acc10, acc11, acc12, acc13};
+    const float* b_rows[4] = {b0, b1, b2, b3};
+    for (int col = 0; col < cols; ++col) {
+        float sum0 = horizontal_sum(accumulators0[col]);
+        float sum1 = horizontal_sum(accumulators1[col]);
+        for (int tail = p; tail < K; ++tail) {
+            sum0 += a0[tail] * b_rows[col][tail];
+            sum1 += a1[tail] * b_rows[col][tail];
+        }
+        c0[column + col] = sum0;
+        c1[column + col] = sum1;
+    }
+}
+
+void matmul_optimized(const float* __restrict A, const float* __restrict B, float* __restrict C,
                       int M, int N, int K, int lda, int ldb, int ldc) {
-    // TODO(student): replace this placeholder with your best combined implementation.
-    const int block_m = 32;
-    const int block_n = 32;
-    const int block_k = 128;
-    const int prefetch_dist = 16;
-    const int block_out = 4;
-    for(int ti = 0; ti < M ; ti += block_m){
-        const int i_end = (ti + block_m < M) ? ti + block_m : M;
+    const int T = 64;
 
-        for(int tj = 0 ; tj < N ; tj+= block_n){
-            const int j_end = (tj + block_n < N) ? tj + block_n : N;
+    for (int jb = 0; jb < N; jb += T) {
+        const int j_end = (jb + T < N) ? jb + T : N;
+        for (int ib = 0; ib < M; ib += T) {
+            const int i_end = (ib + T < M) ? ib + T : M;
 
-            for (int i = ti; i < i_end; ++i) {
-                const float* a_base = A + static_cast<long>(i) * lda;
+            int i = ib;
+            for (; i + 2 < i_end; i += 3) {
+                const float* a0 = A + static_cast<long>(i) * lda;
+                const float* a1 = A + static_cast<long>(i + 1) * lda;
+                const float* a2 = A + static_cast<long>(i + 2) * lda;
+                float* c0 = C + static_cast<long>(i) * ldc;
+                float* c1 = C + static_cast<long>(i + 1) * ldc;
+                float* c2 = C + static_cast<long>(i + 2) * ldc;
+
+                for (int j = jb; j < j_end; j += 4) {
+                    const int cols = (j_end - j < 4) ? j_end - j : 4;
+                    const float* b0 = B + static_cast<long>(j) * ldb;
+                    const float* b1 = (cols > 1) ? b0 + ldb : nullptr;
+                    const float* b2 = (cols > 2) ? b0 + 2L * ldb : nullptr;
+                    const float* b3 = (cols > 3) ? b0 + 3L * ldb : nullptr;
+
+                    __m256 acc00 = _mm256_setzero_ps(), acc01 = _mm256_setzero_ps();
+                    __m256 acc02 = _mm256_setzero_ps(), acc03 = _mm256_setzero_ps();
+                    __m256 acc10 = _mm256_setzero_ps(), acc11 = _mm256_setzero_ps();
+                    __m256 acc12 = _mm256_setzero_ps(), acc13 = _mm256_setzero_ps();
+                    __m256 acc20 = _mm256_setzero_ps(), acc21 = _mm256_setzero_ps();
+                    __m256 acc22 = _mm256_setzero_ps(), acc23 = _mm256_setzero_ps();
+
+                    int p = 0;
+                    for (; p + 8 <= K; p += 8) {
+                        const __m256 va0 = _mm256_loadu_ps(a0 + p);
+                        const __m256 va1 = _mm256_loadu_ps(a1 + p);
+                        const __m256 va2 = _mm256_loadu_ps(a2 + p);
+                        const __m256 vb0 = _mm256_loadu_ps(b0 + p);
+                        acc00 = _mm256_fmadd_ps(va0, vb0, acc00);
+                        acc10 = _mm256_fmadd_ps(va1, vb0, acc10);
+                        acc20 = _mm256_fmadd_ps(va2, vb0, acc20);
+                        if (cols > 1) { const __m256 vb1 = _mm256_loadu_ps(b1 + p); acc01 = _mm256_fmadd_ps(va0, vb1, acc01); acc11 = _mm256_fmadd_ps(va1, vb1, acc11); acc21 = _mm256_fmadd_ps(va2, vb1, acc21); }
+                        if (cols > 2) { const __m256 vb2 = _mm256_loadu_ps(b2 + p); acc02 = _mm256_fmadd_ps(va0, vb2, acc02); acc12 = _mm256_fmadd_ps(va1, vb2, acc12); acc22 = _mm256_fmadd_ps(va2, vb2, acc22); }
+                        if (cols > 3) { const __m256 vb3 = _mm256_loadu_ps(b3 + p); acc03 = _mm256_fmadd_ps(va0, vb3, acc03); acc13 = _mm256_fmadd_ps(va1, vb3, acc13); acc23 = _mm256_fmadd_ps(va2, vb3, acc23); }
+                    }
+
+                    __m256 accumulators0[4] = {acc00, acc01, acc02, acc03};
+                    __m256 accumulators1[4] = {acc10, acc11, acc12, acc13};
+                    __m256 accumulators2[4] = {acc20, acc21, acc22, acc23};
+                    const float* b_rows[4] = {b0, b1, b2, b3};
+                    for (int col = 0; col < cols; ++col) {
+                        float sum0 = horizontal_sum(accumulators0[col]);
+                        float sum1 = horizontal_sum(accumulators1[col]);
+                        float sum2 = horizontal_sum(accumulators2[col]);
+                        for (int tail = p; tail < K; ++tail) {
+                            sum0 += a0[tail] * b_rows[col][tail];
+                            sum1 += a1[tail] * b_rows[col][tail];
+                            sum2 += a2[tail] * b_rows[col][tail];
+                        }
+                        c0[j + col] = sum0;
+                        c1[j + col] = sum1;
+                        c2[j + col] = sum2;
+                    }
+                }
+            }
+
+            if (i + 1 < i_end) {
+                const float* a0 = A + static_cast<long>(i) * lda;
+                const float* a1 = A + static_cast<long>(i + 1) * lda;
+                float* c0 = C + static_cast<long>(i) * ldc;
+                float* c1 = C + static_cast<long>(i + 1) * ldc;
+                for (int j = jb; j < j_end; j += 4) {
+                    const int cols = (j_end - j < 4) ? j_end - j : 4;
+                    const float* b0 = B + static_cast<long>(j) * ldb;
+                    compute_two_rows(a0, a1, c0, c1, b0,
+                                     (cols > 1) ? b0 + ldb : nullptr,
+                                     (cols > 2) ? b0 + 2L * ldb : nullptr,
+                                     (cols > 3) ? b0 + 3L * ldb : nullptr,
+                                     cols, K, j);
+                }
+                i += 2;
+            } else if (i < i_end) {
+                const float* a = A + static_cast<long>(i) * lda;
                 float* c_row = C + static_cast<long>(i) * ldc;
-
-                int j = tj;
-                for (; j + block_out <= j_end; j += block_out) {
-                    const float* b0 = B + static_cast<long>(j + 0) * ldb;
-                    const float* b1 = B + static_cast<long>(j + 1) * ldb;
-                    const float* b2 = B + static_cast<long>(j + 2) * ldb;
-                    const float* b3 = B + static_cast<long>(j + 3) * ldb;
-
-                    // Keep the output accumulators alive across all K tiles.
-                    __m256 acc0 = _mm256_setzero_ps();
-                    __m256 acc1 = _mm256_setzero_ps();
-                    __m256 acc2 = _mm256_setzero_ps();
-                    __m256 acc3 = _mm256_setzero_ps();
-                    float tail0 = 0.0f;
-                    float tail1 = 0.0f;
-                    float tail2 = 0.0f;
-                    float tail3 = 0.0f;
-
-                    for (int tk = 0; tk < K; tk += block_k) {
-                        const int tile_k =
-                            (tk + block_k < K) ? block_k : K - tk;
-                        const float* a = a_base + tk;
-                        const float* current_b0 = b0 + tk;
-                        const float* current_b1 = b1 + tk;
-                        const float* current_b2 = b2 + tk;
-                        const float* current_b3 = b3 + tk;
-
-                        int p = 0;
-                        for (; p + 16 <= tile_k; p += 16) {
-                            if (p + prefetch_dist < tile_k) {
-                                _mm_prefetch(reinterpret_cast<const char*>(a + p + prefetch_dist), _MM_HINT_T0);
-                                _mm_prefetch(reinterpret_cast<const char*>(current_b0 + p + prefetch_dist), _MM_HINT_T0);
-                                _mm_prefetch(reinterpret_cast<const char*>(current_b1 + p + prefetch_dist), _MM_HINT_T0);
-                                _mm_prefetch(reinterpret_cast<const char*>(current_b2 + p + prefetch_dist), _MM_HINT_T0);
-                                _mm_prefetch(reinterpret_cast<const char*>(current_b3 + p + prefetch_dist), _MM_HINT_T0);
-                            }
-
-                            __m256 a0 = _mm256_loadu_ps(a + p);
-                            __m256 a1 = _mm256_loadu_ps(a + p + 8);
-
-                            acc0 = _mm256_fmadd_ps(a0, _mm256_loadu_ps(current_b0 + p), acc0);
-                            acc1 = _mm256_fmadd_ps(a0, _mm256_loadu_ps(current_b1 + p), acc1);
-                            acc2 = _mm256_fmadd_ps(a0, _mm256_loadu_ps(current_b2 + p), acc2);
-                            acc3 = _mm256_fmadd_ps(a0, _mm256_loadu_ps(current_b3 + p), acc3);
-                            acc0 = _mm256_fmadd_ps(a1, _mm256_loadu_ps(current_b0 + p + 8), acc0);
-                            acc1 = _mm256_fmadd_ps(a1, _mm256_loadu_ps(current_b1 + p + 8), acc1);
-                            acc2 = _mm256_fmadd_ps(a1, _mm256_loadu_ps(current_b2 + p + 8), acc2);
-                            acc3 = _mm256_fmadd_ps(a1, _mm256_loadu_ps(current_b3 + p + 8), acc3);
-                        }
-
-                        for (; p + 8 <= tile_k; p += 8) {
-                            if (p + prefetch_dist < tile_k) {
-                                _mm_prefetch(reinterpret_cast<const char*>(a + p + prefetch_dist), _MM_HINT_T0);
-                                _mm_prefetch(reinterpret_cast<const char*>(current_b0 + p + prefetch_dist), _MM_HINT_T0);
-                                _mm_prefetch(reinterpret_cast<const char*>(current_b1 + p + prefetch_dist), _MM_HINT_T0);
-                                _mm_prefetch(reinterpret_cast<const char*>(current_b2 + p + prefetch_dist), _MM_HINT_T0);
-                                _mm_prefetch(reinterpret_cast<const char*>(current_b3 + p + prefetch_dist), _MM_HINT_T0);
-                            }
-
-                            __m256 a_values = _mm256_loadu_ps(a + p);
-                            acc0 = _mm256_fmadd_ps(a_values, _mm256_loadu_ps(current_b0 + p), acc0);
-                            acc1 = _mm256_fmadd_ps(a_values, _mm256_loadu_ps(current_b1 + p), acc1);
-                            acc2 = _mm256_fmadd_ps(a_values, _mm256_loadu_ps(current_b2 + p), acc2);
-                            acc3 = _mm256_fmadd_ps(a_values, _mm256_loadu_ps(current_b3 + p), acc3);
-                        }
-
-                        for (; p < tile_k; ++p) {
-                            tail0 += a[p] * current_b0[p];
-                            tail1 += a[p] * current_b1[p];
-                            tail2 += a[p] * current_b2[p];
-                            tail3 += a[p] * current_b3[p];
-                        }
-                    }
-
-                    c_row[j + 0] = hsum256(acc0) + tail0;
-                    c_row[j + 1] = hsum256(acc1) + tail1;
-                    c_row[j + 2] = hsum256(acc2) + tail2;
-                    c_row[j + 3] = hsum256(acc3) + tail3;
+                for (int j = jb; j < j_end; j += 4) {
+                    const int cols = (j_end - j < 4) ? j_end - j : 4;
+                    const float* b0 = B + static_cast<long>(j) * ldb;
+                    compute_one_row(a, c_row, b0,
+                                    (cols > 1) ? b0 + ldb : nullptr,
+                                    (cols > 2) ? b0 + 2L * ldb : nullptr,
+                                    (cols > 3) ? b0 + 3L * ldb : nullptr,
+                                    cols, K, j);
                 }
-
-                for (; j < j_end; ++j) {
-                    float result = 0.0f;
-                    const float* b = B + static_cast<long>(j) * ldb;
-
-                    for (int tk = 0; tk < K; tk += block_k) {
-                        const int tile_k =
-                            (tk + block_k < K) ? block_k : K - tk;
-                        result += dot_prefetch(
-                            a_base + tk, b + tk, tile_k, prefetch_dist);
-                    }
-
-                    c_row[j] = result;
-                }
+                i += 1;
             }
         }
     }
