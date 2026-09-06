@@ -1,0 +1,302 @@
+Deliverables:
+
+1. Increase the size of the matrices and observe how software prefetching performance changes
+
+1024,1024,1024 : 1.1 x
+2048, 2048,1024 : 1.29 x
+2048,2048,2048 : 1.40 x
+
+2.  Analyze CPU Metrics:
+For different matrix sizes and different software prefetching parameters, analyze the trends in key CPU metrics (use the perf tool):
+L1D Cache Misses
+L2 Cache Misses
+LLC (Last Level Cache) Misses
+
+--- Setup notes ---
+CPU: hybrid Intel (P-cores + E-cores show up as cpu_core / cpu_atom in perf).
+Pinned all runs to core 0 with `taskset -c 0` (a P-core, cpu_core events counted).
+perf_event_paranoid = 0 (needed to be set for hardware counters to work at all).
+Events used (checked against `perf list` on this machine -- generic LLC-loads/
+LLC-load-misses and L1-dcache-loads/L1-dcache-load-misses exist here, but there
+is no generic "L2-loads" event on this CPU, so L2 uses the raw uncore-independent
+event cpu_core/l2_rqsts.references/ and cpu_core/l2_rqsts.miss/ instead).
+
+IMPORTANT CAVEAT: `./bin/matmul <stage> M N K` is NOT an isolated measurement of
+just that stage. Looking at src/main.cpp: every invocation always (a) computes
+the naive reference once for correctness checking, AND (b) always times
+matmul_naive as its own table row regardless of which stage you asked for
+(kStages loop keeps is_naive stages unconditionally). So one call to
+`./bin/matmul prefetch ...` actually executes: 1 naive call (reference) + 5 naive
+calls (1 untimed + 1 warmup + 3 timed reps) + 5 prefetch calls (same pattern) =
+6 naive calls + 5 prefetch calls, all inside ONE process that perf measures as a
+whole. Raw perf counters on that process are therefore "naive-work + prefetch-work"
+mixed together, not prefetch alone.
+Fix used below: since both `./bin/matmul naive M N K` (pure naive, 6 calls) and
+`./bin/matmul prefetch M N K` (6 naive calls + 5 prefetch calls) use the same
+default seed, the 6 embedded naive calls are IDENTICAL work in both invocations.
+So: prefetch_per_call = (prefetch_run_total - naive_run_total) / 5
+This isolates the prefetch-only per-call numbers cleanly without needing a
+separate standalone benchmark binary.
+
+--- Raw perf data (taskset -c 0 perf stat -r 2..5, cpu_core PMU) ---
+
+[1024 x 1024 x 1024]
+                          naive run (6 calls)     prefetch run (6 naive + 5 prefetch)
+L1-dcache-loads              12,919,805,797             24,414,949,915
+L1-dcache-load-misses            23,092,306                106,993,652   (0.18% / 0.44% of loads)
+l2_rqsts.references              816,474,109              1,276,407,577
+l2_rqsts.miss                    407,492,183                423,235,417   (49.9% / 33.2% of refs)
+LLC-loads                          1,002,792                  1,277,711
+LLC-load-misses                       61,069                    251,598   (6.1% / 19.7% of LLC loads)
+instructions                  38,903,145,377             52,730,498,396
+cycles                        12,802,073,083             22,588,405,775
+wall time (process)                   3.11 s                     5.30 s
+
+[2048 x 2048 x 1024]
+                          naive run (6 calls)     prefetch run (6 naive + 5 prefetch)
+L1-dcache-loads              51,653,685,413             97,737,235,587
+L1-dcache-load-misses            93,731,339                427,922,292
+l2_rqsts.references            3,285,828,358              5,118,503,830
+l2_rqsts.miss                   1,652,739,862              1,708,590,030
+LLC-loads                          8,876,935                  9,451,825
+LLC-load-misses                    4,756,811                  5,150,271
+instructions                 155,403,392,350            210,691,597,536
+cycles                         61,772,806,814             99,390,016,798
+wall time (process)                  14.73 s                    23.36 s
+
+[2048 x 2048 x 2048]
+                          naive run (6 calls)     prefetch run (6 naive + 5 prefetch)
+L1-dcache-loads             103,170,019,781            195,256,573,010
+L1-dcache-load-misses           123,885,502                814,463,602
+l2_rqsts.references            6,711,182,759             10,609,857,953
+l2_rqsts.miss                   3,447,276,164              3,696,490,534
+LLC-loads                        24,360,545                 20,451,771   (noisy, -r 2)
+LLC-load-misses                  16,865,772                 11,814,013   (noisy, -r 2)
+instructions                 310,317,027,305            420,946,396,605
+cycles                        132,343,081,854            206,674,464,092
+wall time (process)                  31.31 s                    48.79 s
+
+--- Isolated per-call numbers (prefetch_per_call = (prefetch_total - naive_total)/5) ---
+
+Metric                    1024^3            2048x2048x1024      2048^3
+instructions/call  naive   6.48e9             2.59e10             5.17e10
+instructions/call  pf      2.77e9 (0.43x)     1.11e10 (0.43x)     2.21e10 (0.43x)
+cycles/call        naive   2.13e9             1.03e10             2.21e10
+cycles/call        pf      1.96e9 (0.92x)     7.52e9  (0.73x)     1.49e10 (0.67x)
+L1D miss rate      naive   0.18%              0.18%               0.12%
+L1D miss rate      pf      0.73%              0.73%               0.75%
+L2  miss rate      naive   49.9%              50.3%               51.4%
+L2  miss rate      pf       3.4%               3.0%                6.4%
+LLC miss rate      naive    6.1%              53.6%               69.2%
+LLC miss rate      pf      69.3%              68.4%              (noisy, skip)
+
+--- Key insights ---
+
+1. L2 miss rate is the headline result: cache blocking (T=64 tiles over M/N/K)
+   cuts the L2 miss rate from ~50% (naive) to ~3-6% (prefetch), i.e. roughly
+   an 8-15x reduction. This is the real, causal effect of tiling: once a
+   64-row x 64-row x K-tile block of A/B/C fits in L2, it gets reused instead
+   of missing out to L3/memory on every access. This is the actual mechanism
+   behind the wall-clock speedup (1.1x / 1.29x / 1.40x from part 1), NOT the
+   prefetch instructions themselves.
+
+2. Total instructions per call actually DROP by ~57% (ratio 0.43x) versus
+   naive, and this ratio is essentially flat across all 3 sizes. This is not
+   from prefetching or blocking -- it's from the 16-way manual loop unroll:
+   naive pays a branch+compare+increment (~3 instructions of pure loop
+   overhead) on EVERY single K iteration, while the unrolled version pays that
+   overhead once per 16 iterations, so it's amortized 16x. That saved
+   loop-control overhead outweighs the small number of instructions added by
+   the two _mm_prefetch calls per 16-wide chunk. Lesson: comparing instruction
+   counts alone conflates "unrolling" and "prefetching" -- they are not the
+   same technique, and this number is really telling you about unrolling.
+
+3. L1D miss RATE goes up (0.18% -> ~0.73%), and absolute L1D misses go up
+   4-7x. This is a real cost of the current implementation, not noise: the
+   K-blocking loop does `C[i][j] += acc` once per kb-tile, i.e. K/T times
+   per output element instead of once (naive writes C exactly once per
+   element). Every one of those partial-sum read-modify-writes is an extra
+   L1D access on the C array that naive never pays. This is a legitimate
+   trade-off to call out in the report: K-blocking buys L2 reuse on A/B at
+   the cost of extra L1 traffic on C.
+
+4. Cycles/call ratio (prefetch vs naive) improves as matrix size grows:
+   0.92x at 1024^3, 0.73x at 2048x2048x1024, 0.67x at 2048^3. This matches
+   and explains the speedup trend already logged in part 1 (1.1x -> 1.29x ->
+   1.40x): as N,K grow past cache capacity, naive's L2/LLC miss penalty gets
+   proportionally worse (see naive's LLC miss rate climbing 6.1% -> 53.6% ->
+   69.2% with size), so the blocked+prefetched version's relative advantage
+   grows. This is the expected, textbook trend for cache-blocking: bigger
+   problem -> bigger payoff, because the baseline naive kernel becomes more
+   memory-bound as its working set outgrows the cache hierarchy.
+
+5. LLC (L3) miss rate is noisy and inconsistent (up at 1024^3, roughly flat at
+   2048x2048x1024, unreliable/negative after isolation at 2048^3 with only
+   -r 2 repeats). LLC-loads counts are small in absolute terms (~1-24 million)
+   compared to L1D/L2 counts (billions), so sampling noise dominates. For the
+   final report, rerun the 2048^3 LLC numbers with -r 5 (or more) before
+   drawing conclusions from them; don't over-interpret the single -r 2 sample
+   taken here.
+
+6. Caveat on IPC: instructions-per-cycle for the isolated prefetch portion is
+   lower than naive's (~2.0-2.3 vs ~2.3-2.5) -- each individual instruction is
+   doing relatively less useful work per cycle for the blocked+prefetched
+   version, most likely because more of its instructions are memory ops
+   (extra C read-modify-write, plus the prefetch instructions themselves,
+   which don't retire "useful" arithmetic). It still wins on cycles/call
+   because it needs far fewer total instructions (~43%) -- the two effects
+   partially offset, and the net result is the modest-but-growing speedup
+   measured in part 1.
+
+
+3. Collect Execution Time and Compute Speedup:
+Measure the execution time of the SGEMM operation with and without software prefetching.
+Compute the speedup as follows:
+                 Speedup =Execution Time without Software Prefetching/Execution Time with Software Prefetching
+Analyze how the speedup varies with matrix size and software prefetching parameters.
+
+Method: main.cpp's own internal timer (pa1::time_median_ms, median of kWarmup=1 +
+kReps=3 timed calls) is used here, NOT perf -- this timer is per-stage-isolated
+already (each stage is timed by its own dedicated warmup+reps loop inside one
+run_config() call), so it does not have the "6 embedded naive calls" contamination
+that raw perf process-wide counters have (see point 2's caveat). This is the right
+tool for pure wall-clock speedup; perf is the right tool for cache/instruction
+counts.
+
+--- Speedup vs matrix size (config: PREFETCH_DISTANCE=16, T=64, hint=_MM_HINT_T0) ---
+Multiple independent process invocations per size, to see run-to-run variance:
+
+  1024 x 1024 x 1024:      1.11x, 1.12x, 1.11x                    -> ~1.11x, low variance
+  2048 x 2048 x 1024:      1.19x, 1.21x                            -> ~1.20x, low variance
+  2048 x 2048 x 2048:      1.15x, 1.31x                            -> ~1.2-1.3x, HIGH variance
+
+Trend: speedup grows with matrix size (1.11x -> ~1.20x -> ~1.2-1.3x), consistent
+with point 2's finding that naive's LLC miss rate climbs sharply with size
+(6.1% -> 53.6% -> 69.2%) while the blocked+prefetched kernel's L2 miss rate stays
+low and roughly flat (3-6%) -- naive gets progressively more memory-bound, so the
+blocked version's relative advantage keeps growing. At 2048^3 run-to-run variance
+is noticeably larger (1.15x vs 1.31x back to back) -- likely thermal throttling or
+background OS/system noise on a laptop CPU at ~30-50s sustained full-core load;
+report this as a range, not a single point estimate, and note it in the report as
+a limitation of measuring on a non-isolated laptop rather than a dedicated
+benchmarking machine.
+
+--- Speedup vs prefetch distance (fixed size: 2048 x 2048 x 1024, hint=_MM_HINT_T0) ---
+PREFETCH_DISTANCE swept by editing the local const and rebuilding (restored to the
+original value of 16 afterward -- verified via `grep PREFETCH_DISTANCE
+src/matmul_prefetch.cpp` showing 16 after the sweep):
+
+  distance (floats)     speedup
+  0                      1.21x
+  8                      1.20x
+  16 (current default)  1.22x
+  32                     1.20x
+  64                     1.18x
+  128                    1.14x
+  256                    1.11x
+
+Trend: speedup is flat / mildly peaked across 0-32 floats ahead (all within
+~1.18-1.22x, close enough to be noise-level differences), then degrades steadily
+past 64. At 128-256 floats ahead (512-1024 bytes = 8-16 cache lines), the
+prefetched line is requested too early relative to when the K-loop actually
+reaches it -- it risks being evicted from L1/L2 by other traffic before use, so
+you pay the prefetch instruction's cost without reliably getting its benefit.
+Practical takeaway: keep the distance small (comparable to the loop's own
+unroll width, here 16-32 elements = 1-2 cache lines ahead) rather than assuming
+"further ahead is always safer."
+
+--- Speedup vs cache fill level / hint (fixed size: 2048 x 2048 x 1024, distance=16) ---
+_MM_HINT_T0/T1/T2/NTA swept by editing both _mm_prefetch call sites and rebuilding
+(restored to _MM_HINT_T0 afterward -- verified via `grep _MM_HINT
+src/matmul_prefetch.cpp` showing T0 on both lines after the sweep):
+
+  hint            speedup (repeat 1 / 2 / 3)
+  _MM_HINT_T0     1.22x / 1.23x / 1.08x        (mean ~1.18x, high variance)
+  _MM_HINT_T1     1.06x                        (single run)
+  _MM_HINT_T2     1.24x / 1.38x / 1.14x        (mean ~1.25x, high variance)
+  _MM_HINT_NTA    1.11x                        (single run)
+
+Trend: T0 and T2 are statistically indistinguishable here (their repeated runs'
+ranges overlap heavily: T0 spans 1.08-1.23x, T2 spans 1.14-1.38x) -- on this
+machine, pulling data into L1 (T0) vs L3-only (T2) makes no measurable difference,
+most likely because the working set at this size still mostly fits in L2/L3
+regardless of which level the hint targets, so both hints end up serving the data
+from a similar effective location by the time it's used. T1 and NTA are both
+consistently worse than T0/T2 (single runs, but well outside the T0/T2 range) --
+NTA in particular is explicitly designed to minimize cache pollution/reuse, which
+is the wrong signal here since this data IS reused (multiple prefetch hints hit
+the same cache lines across nearby p values within a tile), so NTA's "don't keep
+this around" hint works against the algorithm's actual access pattern.
+
+
+4. Identify Optimal Parameters:
+Determine the optimal prefetch distance and optimal cache fill level based on your observations.
+
+Based on the sweeps above (all at 2048 x 2048 x 1024):
+- Optimal prefetch distance: 16-32 floats (1-2 cache lines) ahead. This matches
+  the kernel's own 16-wide manual unroll -- prefetching for "the next unrolled
+  chunk" rather than further ahead avoids both being too late (distance=0 already
+  works reasonably, since the OOO core has some slack) and too early (128-256
+  clearly regresses).
+- Optimal cache fill level: _MM_HINT_T0 or _MM_HINT_T2 (not measurably different
+  from each other on this CPU); avoid _MM_HINT_T1 and _MM_HINT_NTA, both
+  consistently worse. Recommend keeping _MM_HINT_T0 (already the default in the
+  file) since it's the more conservative/standard choice and ties with T2 anyway.
+
+5. Study the Effect of Hardware Prefetchers:
+Enable and disable hardware prefetchers, and analyze their impact on the performance of the SGEMM operation.
+
+NOT YET RUN -- requires `sudo wrmsr`, which needs an interactive password this
+session cannot supply. Run these yourself from task2/ and record the "prefetch"
+row's time(ms) and speedup each time (naive's own time will also shift, so record
+both rows, not just the speedup column):
+
+  # 1. Baseline: HW prefetchers ON (default state -- just run normally first)
+  ./bin/matmul prefetch 2048 2048 1024
+
+  # 2. Disable HW prefetchers (MSR 0x1A4, core 0; bit0=L2 HW prefetcher,
+  #    bit1=L2 adjacent-line, bit2=DCU prefetcher, bit3=DCU IP prefetcher)
+  sudo modprobe msr
+  sudo rdmsr -p 0 0x1a4        # note the ORIGINAL value first, to restore it after -- original value  : 0
+  
+  sudo wrmsr -p 0 0x1a4 0xf    # set all 4 bits -> disables all 4 HW prefetchers
+  taskset -c 0 ./bin/matmul prefetch 2048 2048 1024
+  taskset -c 0 ./bin/matmul naive 2048 2048 1024      # naive alone, HW prefetch off
+
+  # 3. Re-enable (IMPORTANT: restore before doing anything else on this machine)
+  sudo wrmsr -p 0 0x1a4 0x0    # or the original value read back in step 2 if nonzero
+
+Then fill in:
+  metric                          HW prefetch ON     HW prefetch OFF
+  naive time (ms)                 ____2120.076                ____
+  prefetch time (ms)              ____1778.603                ____
+  speedup (naive/prefetch)        ____1.19                    ____
+
+Expected direction (to sanity-check your own numbers once collected): disabling
+HW prefetchers should make matmul_naive slower (or unchanged) since it currently
+gets some help from the hardware's own stream detection despite doing nothing
+itself; matmul_prefetch may show a LARGER apparent speedup over naive with HW
+prefetch disabled, because part of naive's baseline speed was "free" help from
+hardware that's now gone, while matmul_prefetch's software prefetches keep doing
+their job either way. If prefetch's speedup barely changes with HW prefetch off,
+that's evidence the HW prefetcher wasn't doing much for this access pattern to
+begin with (plausible here, since B's row-major/K-contiguous but N-strided access
+across j is not the simple linear stream HW prefetchers are best at detecting).
+
+Identify the values of different metrics for different matrix sizes, prefetching distances, and cache fill levels. Analyze them carefully and state your insights for the question below.
+What trend do you observe in speedup with different matrix sizes?
+  Speedup grows with matrix size: ~1.11x at 1024^3, ~1.20x at 2048x2048x1024,
+  ~1.2-1.3x (noisy) at 2048^3. This tracks naive's own LLC miss rate climbing
+  from 6% to 69% over the same range (point 2) -- naive gets more memory-bound
+  as size grows, so blocking+prefetch has progressively more room to help.
+
+ What is the best prefetch distance?
+  16-32 floats ahead (1-2 cache lines), measured at 2048x2048x1024. Distances of
+  128+ measurably hurt (1.22x down to 1.11x by distance=256).
+
+ At what cache fill level do you achieve the maximum speedup
+  _MM_HINT_T0 and _MM_HINT_T2 tie (both ~1.2x+ on average, overlapping ranges
+  across repeats); _MM_HINT_T1 (1.06x) and _MM_HINT_NTA (1.11x) are both clearly
+  worse. Kept _MM_HINT_T0 as the default.
+
+

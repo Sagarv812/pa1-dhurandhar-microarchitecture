@@ -10,16 +10,20 @@ void matmul_simd(const float* A, const float* B, float* C,
     for (int i = 0; i < M; ++i) {
         const float* a = A + static_cast<long>(i) * lda;
         for (int j = 0; j < N; ++j) {
-            __m256 acc = _mm256_setzero_ps();
+            __m256 acc0 = _mm256_setzero_ps();
+            __m256 acc1 = _mm256_setzero_ps();
+
             const float* b = B + static_cast<long>(j) * ldb;
             int p = 0;
+            for (; p + 16 <= K; p += 16) {
+                acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(a+p),   _mm256_loadu_ps(b+p),   acc0);
+                acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(a+p+8), _mm256_loadu_ps(b+p+8), acc1);
+            }
             for (; p + 8 <= K; p += 8) {
-                __m256 va = _mm256_loadu_ps(a + p);
-                __m256 vb = _mm256_loadu_ps(b + p);
-                acc = _mm256_fmadd_ps(va, vb, acc);
+                acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(a+p), _mm256_loadu_ps(b+p), acc0);
             }
             float out[8];
-            _mm256_storeu_ps(out, acc);
+            _mm256_storeu_ps(out, _mm256_add_ps(acc0,acc1));
             float sum = 0.0f;
             for (int t = 0; t < 8; ++t) sum += out[t];
             for (; p < K; ++p) sum += a[p] * b[p];
