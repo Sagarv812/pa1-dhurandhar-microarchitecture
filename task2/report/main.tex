@@ -106,86 +106,220 @@ pinned to CPU~0, a P-core, with \texttt{taskset -c 0}. L1-D size is 48KB and lin
 
 \subsection{Implementation}
 
-\begin{todobox}[matmul\_prefetch design]
-Cache blocking on $M$/$N$ (block sizes, why panels then fit L1/L2), then
-\texttt{\_mm\_prefetch} hints ahead of use. State prefetch distance and
-locality hint chosen, and the \texttt{\_builtin\_prefetch} vs
-\texttt{\_mm\_prefetch} choice.
-\end{todobox}
-
-\subsection{Baseline Profiling (perf)}
-
-\begin{todobox}[cache-miss metrics]
-\texttt{perf stat} for L1D / L2 / LLC misses and \texttt{sw\_prefetch\_access}
-across matrix sizes and prefetch parameters, for naive vs prefetch.
-\end{todobox}
-
-\begin{table}[H]
-    \centering
-    \begin{tabular}{lrrrr}
-        \toprule
-        \textbf{Config} & \textbf{L1D misses} & \textbf{L2 misses} & \textbf{LLC misses} & \textbf{sw\_prefetch} \\
-        \midrule
-        naive & --- & --- & --- & --- \\
-        prefetch & --- & --- & --- & --- \\
-        \bottomrule
-    \end{tabular}
-    \caption{Cache metrics, naive vs prefetch. \textbf{TODO: fill values.}}
-    \label{tab:t2-prefetch-perf}
-\end{table}
+\texttt{matmul\_prefetch} tiles $M$, $N$, and $K$ with block size $T=64$. Within a tile, the $K$-loop is unrolled by 16 and
+\texttt{\_mm\_prefetch(\ldots, \_MM\_HINT\_T0)} issues a lookahead load for
+both operands every 16 elements, at a chosen distance ahead of use. The
+lookahead is bounded by the true row length $K$ (not the current $K$-tile's
+edge), so prefetching correctly continues into the next $K$-tile of the same
+row for large distances. \texttt{\_mm\_prefetch} was used over
+\texttt{\_\_builtin\_prefetch} for direct control over the locality hint.
 
 \subsection{Speedup vs. Matrix Size}
 
+Hint fixed at \texttt{\_MM\_HINT\_T0}, $T=64$, distance in $\{32,64\}$,
+$N\in\{128,256,512,1024,1536,2048,3072\}$. Speedup is vs.\
+\texttt{matmul\_naive}.
+
 \begin{figure}[H]
     \centering
-    \fbox{\parbox[c][4cm][c]{0.7\textwidth}{\centering\itshape
-    plot placeholder: \texttt{task2\_prefetch\_speedup\_vs\_size.png}}}
+    \includegraphics[width=0.75\textwidth]{task2a_size_speedup.png}
     \caption{Speedup of \texttt{matmul\_prefetch} over \texttt{matmul\_naive}
-    vs.\ matrix size (cache-resident through beyond-LLC). \textbf{TODO: add plot.}}
+    vs.\ matrix size, for distance $=32$ and $=64$.}
     \label{fig:t2-prefetch-vs-size}
+\end{figure}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{rrr}
+        \toprule
+        \textbf{$N$} & \textbf{Speedup (dist$=32$)} & \textbf{Speedup (dist$=64$)} \\
+        \midrule
+        128  & 1.33x & 1.53x \\
+        256  & 1.38x & 1.23x \\
+        512  & 1.34x & 1.29x \\
+        1024 & 1.35x & 1.38x \\
+        1536 & 1.31x & 1.37x \\
+        2048 & 1.36x & 1.35x \\
+        3072 & 1.39x & 1.44x \\
+        \bottomrule
+    \end{tabular}
+    \caption{Speedup vs.\ \texttt{matmul\_naive} across matrix sizes. Speedup
+    is consistently in the $1.2$--$1.5\times$ range with no strong monotonic
+    trend; distance $=64$ has the higher mean (1.37x vs.\ 1.35x) and wins at
+    the largest size tested ($N=3072$).}
+    \label{tab:t2-prefetch-vs-size}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task2a_size_cache_metrics.png}
+    \caption{L1D, L2, LLC misses and \texttt{sw\_prefetch\_access.any} vs.\
+    matrix size (log-log), for distance $=32$ and $=64$. All four metrics
+    grow monotonically with $N^3$-scale work; L2 misses cross into the
+    billions and LLC misses into the tens of millions by $N=3072$, past the
+    point where the working set fits in LLC.}
+    \label{fig:t2-prefetch-vs-size-metrics}
 \end{figure}
 
 \subsection{Speedup vs. Prefetch Distance}
 
+Hint fixed at \texttt{\_MM\_HINT\_T0}, $T=64$, distance swept in
+$\{8,16,32,64,128,256\}$ floats at $N=1024,2048$. Speedup is vs.\
+\texttt{matmul\_naive} on the same workload/seed.
+
 \begin{figure}[H]
     \centering
-    \fbox{\parbox[c][4cm][c]{0.7\textwidth}{\centering\itshape
-    plot placeholder: \texttt{task2\_prefetch\_distance.png}}}
-    \caption{Speedup vs.\ prefetch distance (in floats / cache lines) for
-    \texttt{matmul\_prefetch}. \textbf{TODO: add plot.}}
+    \includegraphics[width=0.75\textwidth]{task2a_distance_speedup.png}
+    \caption{Speedup vs.\ prefetch distance for \texttt{matmul\_prefetch}.}
     \label{fig:t2-prefetch-distance}
+\end{figure}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{rrr}
+        \toprule
+        \textbf{Distance (floats)} & \textbf{Speedup ($N{=}1024$)} & \textbf{Speedup ($N{=}2048$)} \\
+        \midrule
+        8   & 1.32x & 1.29x \\
+        16  & 1.10x & 1.15x \\
+        32  & 1.33x & 1.32x \\
+        64  & 1.31x & 1.36x \\
+        128 & 1.25x & 1.30x \\
+        256 & 1.18x & 1.26x \\
+        \bottomrule
+    \end{tabular}
+    \caption{Speedup vs.\ \texttt{matmul\_naive} by prefetch distance. Best mean
+    speedup at distance $=64$ (1.33x).}
+    \label{tab:t2-prefetch-distance}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task2a_distance_cache_metrics.png}
+    \caption{L1D, L2, LLC misses and \texttt{sw\_prefetch\_access.any} vs.\
+    prefetch distance. L2/LLC misses rise gradually with distance (prefetched
+    lines evicted before use); \texttt{sw\_prefetch\_access.any} falls at
+    large distances.}
+    \label{fig:t2-prefetch-distance-metrics}
 \end{figure}
 
 \subsection{Speedup vs. Prefetch Locality Hint}
 
+Distance fixed at $64$ floats, $T=64$, hint swept over
+\texttt{\_MM\_HINT\_\{T0,T1,T2,NTA\}} at $N=1024,2048$. Speedup is vs.\
+\texttt{matmul\_naive} on the same workload/seed.
+
 \begin{figure}[H]
     \centering
-    \fbox{\parbox[c][4cm][c]{0.7\textwidth}{\centering\itshape
-    plot placeholder: \texttt{task2\_prefetch\_hint.png}}}
-    \caption{Speedup for \texttt{\_MM\_HINT\_T0 / T1 / T2 / NTA} locality hints.
-    \textbf{TODO: add plot.}}
+    \includegraphics[width=0.75\textwidth]{task2a_hint_speedup.png}
+    \caption{Speedup for \texttt{\_MM\_HINT\_T0 / T1 / T2 / NTA} locality hints.}
     \label{fig:t2-prefetch-hint}
+\end{figure}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{rrr}
+        \toprule
+        \textbf{Hint} & \textbf{Speedup ($N{=}1024$)} & \textbf{Speedup ($N{=}2048$)} \\
+        \midrule
+        T0  & 1.37x & 1.38x \\
+        T1  & 1.37x & 1.33x \\
+        T2  & 1.35x & 1.35x \\
+        NTA & 1.34x & 1.36x \\
+        \bottomrule
+    \end{tabular}
+    \caption{Speedup vs.\ \texttt{matmul\_naive} by locality hint. Best mean
+    speedup at \texttt{T0} (1.38x).}
+    \label{tab:t2-prefetch-hint}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task2a_hint_cache_metrics.png}
+    \caption{L1D, L2, LLC misses and \texttt{sw\_prefetch\_access.any} vs.\
+    locality hint. LLC misses are lowest for \texttt{T1}, highest for
+    \texttt{NTA}; L1D misses and \texttt{sw\_prefetch\_access.any} are
+    essentially flat across hints.}
+    \label{fig:t2-prefetch-hint-metrics}
 \end{figure}
 
 \subsection{Effect of Hardware Prefetchers}
 
-\begin{todobox}[HW prefetcher on/off]
-Enable/disable hardware prefetchers (MSR 0x1A4) and report the impact on the
-SGEMM speedup and on the software-prefetch benefit.
-\end{todobox}
+All four L2/L3 hardware prefetchers were disabled via MSR \texttt{0x1A4}
+(\texttt{wrmsr -p 0 0x1a4 0xf}, restored to \texttt{0x0} after) at the best
+config (distance$=64$, hint$=$T0, $T=64$).
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{rrrrr}
+        \toprule
+        \textbf{$N$} & \textbf{HW prefetch} & \textbf{naive (ms)} & \textbf{prefetch (ms)} & \textbf{speedup} \\
+        \midrule
+        1024 & ON  & 476.3  & 348.0  & 1.37x \\
+        1024 & OFF & 476.7  & 383.7  & 1.24x \\
+        2048 & ON  & 4157.1 & 3069.0 & 1.35x \\
+        2048 & OFF & 4930.7 & 3367.6 & 1.46x \\
+        \bottomrule
+    \end{tabular}
+    \caption{Effect of disabling all four HW prefetchers. At $N=1024$, both
+    kernels are barely affected. At $N=2048$, \texttt{naive} slows down by
+    $19$--$44\%$ (a repeat run without \texttt{perf} overhead measured naive
+    OFF at $5964.1$ms, i.e.\ up to $44\%$ slower, showing high run-to-run
+    variance once HW prefetch is off) while \texttt{prefetch} slows by only
+    $\sim\!10\%$ -- so the naive/prefetch speedup ratio \emph{increases} when
+    HW prefetch is disabled.}
+    \label{tab:t2-hwpf}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{rrrrr}
+        \toprule
+        \textbf{Metric} & \textbf{naive ON} & \textbf{naive OFF} & \textbf{prefetch ON} & \textbf{prefetch OFF} \\
+        \midrule
+        L1D miss & 135{,}566{,}760 & 2{,}407{,}962{,}620 & 1{,}003{,}615{,}281 & 5{,}065{,}277{,}174 \\
+        L2 miss  & 3{,}743{,}418{,}813 & 3{,}281{,}496{,}014 & 4{,}188{,}874{,}265 & 3{,}376{,}038{,}747 \\
+        LLC miss & 2{,}937{,}937 & 731{,}057{,}910 & 5{,}025{,}087 & 729{,}032{,}068 \\
+        sw\_prefetch & 136{,}559 & 160{,}125 & 5{,}209{,}576{,}955 & 5{,}208{,}353{,}385 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Cache metrics at $N=2048$, HW prefetch ON vs.\ OFF. LLC misses
+    jump $\sim\!250\times$ for both kernels when HW prefetch is disabled
+    (2.9M$\to$731M naive, 5M$\to$729M prefetch) -- with the streaming
+    prefetcher gone, far more L2 misses actually reach the LLC/DRAM instead
+    of being hidden. \texttt{sw\_prefetch\_access.any} is unchanged (software
+    prefetch issue rate does not depend on the HW prefetcher setting).}
+    \label{tab:t2-hwpf-cache}
+\end{table}
 
 \subsection{Questions}
 \begin{enumerate}[leftmargin=1.6em, itemsep=0.3em]
-    \item \textbf{Trend in speedup with matrix size:}
-    \begin{todobox}\end{todobox}
-    \item \textbf{Best prefetch distance:}
-    \begin{todobox}\end{todobox}
+    \item \textbf{Trend in speedup with matrix size:} Roughly flat, $1.2$--$1.5\times$
+    across $N=128$ to $3072$, with no strong monotonic trend. Prefetching
+    helps by a similar relative margin whether the working set fits in
+    cache or spills well past LLC.
+    \item \textbf{Best prefetch distance:} $64$ floats (mean speedup $1.33\times$
+    across $N{=}1024,2048$), narrowly ahead of $32$ ($1.33\times$); distance
+    $16$ is an outlier low ($1.12\times$).
     \item \textbf{Cache fill level (locality hint) giving maximum speedup:}
-    \begin{todobox}\end{todobox}
+    \texttt{\_MM\_HINT\_T0} (fill all cache levels), mean speedup $1.38\times$
+    across $N{=}1024,2048$; \texttt{T1}, \texttt{T2}, \texttt{NTA} all $1.35\times$.
+    Differences between hints are small compared to the distance sweep.
     \item \textbf{L1D / L2 / LLC miss trends across sizes and parameters:}
-    \begin{todobox}\end{todobox}
-    \item \textbf{Effect of hardware prefetchers:}
-    \begin{todobox}\end{todobox}
+    All three miss counts grow monotonically with $N$ (cubic work growth),
+    from tens of thousands at $N=128$ to billions (L2) / tens of millions
+    (LLC) at $N=3072$. Across distance and hint, L1D and \texttt{sw\_prefetch\_access.any}
+    counts are nearly identical (prefetching does not change the number of
+    loads issued); L2 and LLC misses vary more, generally lower at
+    distance$=64$/hint$=$T1 than at other settings, consistent with those
+    prefetches landing closer to point of use.
+    \item \textbf{Effect of hardware prefetchers:} Disabling them hurts
+    \texttt{naive} far more than \texttt{matmul\_prefetch} at $N=2048$
+    ($19$--$44\%$ slower vs.\ $\sim\!10\%$ slower), so the naive/prefetch
+    speedup ratio goes \emph{up} when HW prefetch is off ($1.35\times \to
+    1.46\times$). Software prefetching substitutes for the missing hardware
+    prefetcher; \texttt{naive} has no such substitute. LLC misses jump
+    $\sim\!250\times$ for both kernels when HW prefetch is disabled.
 \end{enumerate}
 
 \section{Task 2B: SIMD (AVX2)}
