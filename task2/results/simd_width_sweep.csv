@@ -1,0 +1,4 @@
+width,flag,note
+sse,-msse4.2,not-yet-implemented
+avx2,-mavx2 -mfma,not-yet-implemented
+avx512,-mavx512f,not-yet-implemented

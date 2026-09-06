@@ -8,5 +8,37 @@ void matmul_prefetch(const float* A, const float* B, float* C,
                      int M, int N, int K, int lda, int ldb, int ldc) {
     // TODO(student): replace this placeholder with your cache-blocked SIMD + prefetch
     // implementation.
-    matmul_naive(A, B, C, M, N, K, lda, ldb, ldc);
+    const int PREFETCH_DISTANCE = 32;
+
+        for (int i = 0; i < M; ++i) {
+            const float* a = A + static_cast<long>(i) * lda;
+
+        for (int j = 0; j < N; ++j) {
+            float acc = 0.0f;
+            const float* b = B + static_cast<long>(j) * ldb;
+            for (int p = 0; p < K; p+= 16) {
+                _mm_prefetch(reinterpret_cast<const char*>(&a[p + PREFETCH_DISTANCE]), _MM_HINT_T0);
+                _mm_prefetch(reinterpret_cast<const char*>(&b[p + PREFETCH_DISTANCE]), _MM_HINT_T0);
+                acc += a[p] * b[p];
+                acc += a[p + 1] * b[p+1];
+                acc += a[p + 2] * b[p + 2];
+                acc += a[p + 3] * b[p + 3];
+                acc += a[p + 4] * b[p + 4];
+                acc += a[p + 5] * b[p + 5];
+                acc += a[p + 6] * b[p + 6];
+                acc += a[p + 7] * b[p + 7];
+                acc += a[p + 8] * b[p + 8];
+                acc += a[p + 9] * b[p + 9];
+                acc += a[p + 10] * b[p + 10];
+                acc += a[p + 11] * b[p + 11];
+                acc += a[p + 12] * b[p + 12];
+                acc += a[p + 13] * b[p + 13];
+                acc += a[p + 14] * b[p + 14];
+                acc += a[p + 15] * b[p + 15];
+                
+            }
+            C[static_cast<long>(i) * ldc + j] = acc;
+        }
+    }
+
 }
