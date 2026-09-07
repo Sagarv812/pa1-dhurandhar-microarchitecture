@@ -14,7 +14,8 @@ void conv_optimized(const float* in, float* out, const float* ker,
     const int step = 8;
 
     for (int oy = 0; oy < H; oy++) {
-        for (int ox = 0; ox < W; ox+=4*step) {
+        int ox = 0;
+        for (; ox + 4 * step <= W; ox += 4 * step) {
             __m256 acc0 = _mm256_setzero_ps();
             __m256 acc1 = _mm256_setzero_ps();
             __m256 acc2 = _mm256_setzero_ps();
@@ -39,6 +40,27 @@ void conv_optimized(const float* in, float* out, const float* ker,
             _mm256_storeu_ps(out + oy*W + ox + 8,  acc1);
             _mm256_storeu_ps(out + oy*W + ox + 16, acc2);
             _mm256_storeu_ps(out + oy*W + ox + 24, acc3);
+        }
+        for (; ox + step <= W; ox += step) {
+            __m256 acc = _mm256_setzero_ps();
+            for (int ky = 0; ky < K; ky++) {
+                for (int kx = 0; kx < K; kx++) {
+                    __m256 ker_val = _mm256_set1_ps(ker[ky*K + kx]);
+                    const float* in_ptr = in + (oy + ky) * in_stride + (ox + kx);
+                    __m256 in_vals = _mm256_loadu_ps(in_ptr);
+                    acc = _mm256_fmadd_ps(ker_val, in_vals, acc);
+                }
+            }
+            _mm256_storeu_ps(out + oy*W + ox, acc);
+        }
+        for (; ox < W; ox++) {
+            float acc = 0.0f;
+            for (int ky = 0; ky < K; ky++) {
+                for (int kx = 0; kx < K; kx++) {
+                    acc += ker[ky*K + kx] * in[(oy + ky) * in_stride + (ox + kx)];
+                }
+            }
+            out[oy*W + ox] = acc;
         }
     }
 }

@@ -159,11 +159,12 @@ each other, the CPU can do multiple add operations simultaneously, hiding the la
 
 \subsubsection*{Considerations}
 
-The unroll factor is 4. Since $W$ is a multiple of 8, it is also a multiple
-of 4, so no remainder tail is needed. Unlike the reordered version, each
-output pixel is completed before moving to the next group, so the output
-array is written exactly once, the same as naive. There are no extra passes
-over the image and no multi-pass cache pressure.
+The unroll factor is 4; a scalar tail loop handles any $W \bmod 4 \ne 0$
+remainder one pixel at a time, so arbitrary image widths are supported.
+Unlike the reordered version, each output pixel is completed before moving to
+the next group, so the output array is written exactly once, the same as
+naive. There are no extra passes over the image and no multi-pass cache
+pressure.
 
 \subsubsection*{Results}
 \begin{figure}[H]
