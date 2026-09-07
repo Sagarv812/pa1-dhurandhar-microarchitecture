@@ -84,6 +84,7 @@
     {\Huge\bfseries\color{primary} CS683 PA-1}\\[0.4cm]
     {\LARGE\bfseries\color{primary} Task 1 Report}\\[0.3cm]
     {\Large 2D Convolution}\\[0.6cm]
+    {\large 24B1021 | 24B1015 | 24B1037 | 24B0995}\\[0.6cm]
     {\color{accent}\rule{0.5\textwidth}{1.2pt}}\\[1.4cm]
 
     {\large Loop Reordering \(\cdot\) Loop Unrolling \(\cdot\) Cache Tiling \(\cdot\) SIMD (AVX2)}\\[2cm]
@@ -467,6 +468,42 @@ Several combinations were evaluated before settling on this design:
     \caption{Approximate speedup of each stage from the plot, $K=3$.}
     \label{tab:all-opts-table}
 \end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{task1_all_opts_vs_kernel.png}
+    \caption{Speedup of all optimization stages over \texttt{conv\_naive} vs.\
+    kernel size $K \in \{3,5,7\}$, at a fixed image size ($1024^2$).}
+    \label{fig:all-opts-speedup-kernel}
+\end{figure}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrrr}
+        \toprule
+        \textbf{Stage} & \textbf{$K{=}3$} & \textbf{$K{=}5$} & \textbf{$K{=}7$} \\
+        \midrule
+        Loop reordering    & 1.48x & 1.72x & 1.19x \\
+        Loop unrolling     & 2.60x & 3.13x & 1.92x \\
+        Tiling             & 1.10x & 1.30x & 0.90x \\
+        SIMD               & 8.96x & 10.33x & 7.16x \\
+        Tiling + SIMD      & 5.35x & 7.83x & 5.34x \\
+        Tiling + SIMD + Unroll & 10.57x & 14.79x & 11.28x \\
+        \texttt{conv\_optimized} & 13.95x & 18.01x & 11.70x \\
+        \bottomrule
+    \end{tabular}
+    \caption{Speedup vs.\ \texttt{conv\_naive} by kernel size, image size $1024^2$
+    (mean of 10 runs).}
+    \label{tab:all-opts-table-kernel}
+\end{table}
+
+Every stage peaks at $K=5$, not $K=3$ or $K=7$: \texttt{conv\_optimized} rises
+from $13.95\times$ to $18.01\times$, then falls to $11.70\times$ at $K{=}7$,
+below its own $K{=}3$ number; \texttt{tile} drops under $1\times$ there.
+Our register blocking and unroll widths are sized for small $K$; the $K^2$
+inner loop (9 iterations at $K{=}3$, 49 at $K{=}7$) outgrows that fixed
+unroll factor and starts paying for the overhead, while
+\texttt{conv\_naive} has no such structure to outgrow and scales smoothly.
 
 \subsection{Discussion}
 

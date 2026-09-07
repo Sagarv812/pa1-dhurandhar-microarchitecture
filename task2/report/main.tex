@@ -85,6 +85,7 @@
     {\Huge\bfseries\color{primary} CS683 PA-1}\\[0.4cm]
     {\LARGE\bfseries\color{primary} Task 2 Report}\\[0.3cm]
     {\Large Matrix Multiplication (SGEMM)}\\[0.6cm]
+    {\large 24B1021 | 24B1015 | 24B1037 | 24B0995}\\[0.6cm]
     {\color{accent}\rule{0.5\textwidth}{1.2pt}}\\[1.4cm]
 
     {\large Software Prefetching \(\cdot\) SIMD \(\cdot\) llama.cpp Integration}\\[2cm]
@@ -162,12 +163,11 @@ $N\in\{128,256,512,1024,1536,2048,3072\}$. Speedup is vs.\
 \end{figure}
 
 \textit{Why flat:} both \texttt{matmul\_naive} and \texttt{matmul\_prefetch} read
-$A$ and $B$ with unit stride (the harness's NT layout stores $B$ row-major by
-output column, so no transpose is needed), so naive is already reasonably
-cache-friendly and not pathologically bad at any size. Prefetching only hides
+$A$ and $B$ with unit stride, so naive is already reasonably
+cache-friendly and not too bad at any size. Prefetching only hides
 a roughly constant fraction of the memory stall time behind compute at every
-$N$ -- it does not change what fraction of the growing miss counts in
-Fig.~\ref{fig:t2-prefetch-vs-size-metrics} are avoidable -- so the speedup
+$N$. It does not change what fraction of the growing miss counts in
+Fig.~\ref{fig:t2-prefetch-vs-size-metrics} are avoidable. Hence, the speedup
 stays in a narrow band rather than growing with $N$.
 
 \subsection{Speedup vs. Prefetch Distance}
@@ -189,16 +189,18 @@ $\{8,16,32,64,128,256\}$ floats at $N=1024,2048$. Speedup is vs.\
         \toprule
         \textbf{Distance (floats)} & \textbf{Speedup ($N{=}1024$)} & \textbf{Speedup ($N{=}2048$)} \\
         \midrule
-        8   & 1.32x & 1.29x \\
-        16  & 1.10x & 1.15x \\
-        32  & 1.33x & 1.32x \\
-        64  & 1.31x & 1.36x \\
-        128 & 1.25x & 1.30x \\
-        256 & 1.18x & 1.26x \\
+        8   & 1.34x & 1.35x \\
+        16  & 1.23x & 1.23x \\
+        32  & 1.39x & 1.31x \\
+        64  & 1.36x & 1.37x \\
+        128 & 1.24x & 1.31x \\
+        256 & 1.22x & 1.27x \\
         \bottomrule
     \end{tabular}
     \caption{Speedup vs.\ \texttt{matmul\_naive} by prefetch distance. Best mean
-    speedup at distance $=64$ (1.33x).}
+    speedup at distance $=64$ (1.36x), narrowly ahead of $32$ (1.35x); $32$ is
+    actually higher at $N{=}1024$ alone, but $64$ wins on the $N{=}2048$ point
+    and the overall mean.}
     \label{tab:t2-prefetch-distance}
 \end{table}
 
@@ -206,20 +208,25 @@ $\{8,16,32,64,128,256\}$ floats at $N=1024,2048$. Speedup is vs.\
     \centering
     \includegraphics[width=0.95\textwidth]{task2a_distance_cache_metrics.png}
     \caption{L1D, L2, LLC misses and \texttt{sw\_prefetch\_access.any} vs.\
-    prefetch distance. L2/LLC misses rise gradually with distance (prefetched
-    lines evicted before use); \texttt{sw\_prefetch\_access.any} falls at
-    large distances.}
+    prefetch distance. L1D misses and \texttt{sw\_prefetch\_access.any} vary
+    smoothly and predictably with distance; L2 misses are essentially flat
+    (within $\pm 2\%$) across all six distances, and LLC misses are noisy
+    (lowest at distance$=32$, highest at $64$) since they are rare events on
+    this implementation and a median of 2 repeats does not fully average
+    that out.}
     \label{fig:t2-prefetch-distance-metrics}
 \end{figure}
 
-\textit{Why $64$ wins:} it gives the load pipeline enough lead time to complete
-the DRAM/LLC fetch before the data is touched, without prefetching so far
-ahead that the line is evicted before use -- L2/LLC misses in
-Fig.~\ref{fig:t2-prefetch-distance-metrics} climb again past distance$=64$,
-consistent with early prefetches going stale. Distance$=16$ is an outlier low
-($1.12\times$); it coincides with the $K$-unroll granularity of 16, so at that
-one distance the prefetch and its consuming load land in the same unrolled
-step, leaving almost no lead time -- effectively no prefetching at all.
+\textit{Why $64$ wins (on the mean):} it gives the load pipeline enough lead
+time to complete the DRAM/LLC fetch before the data is touched, without
+prefetching so far ahead that the line is evicted before use. $32$ is close
+behind and even edges it out at $N{=}1024$ alone. The two sit in the same
+"enough but not too much" lead-time area, and the gap between them is
+smaller than the run-to-run noise visible in the LLC-miss counts above.
+Distance$=16$ is the clear low point at both sizes ($1.23\times$); it
+coincides with the function's $K$-unroll granularity of 16, so at that one
+distance the prefetch and its consuming load land in the same unrolled step,
+leaving little effective lead time.
 
 \subsection{Speedup vs. Prefetch Locality Hint}
 
@@ -331,17 +338,18 @@ config (distance$=64$, hint$=$T0, $T=64$).
     with $N$, but that growth is common to both kernels, so the \emph{ratio}
     stays flat even though the \emph{absolute} misses avoided keep growing.
 
-    \item \textbf{Best prefetch distance:} $64$ floats, mean speedup $1.33\times$
+    \item \textbf{Best prefetch distance:} $64$ floats, mean speedup $1.36\times$
     across $N{=}1024,2048$ (Table~\ref{tab:t2-prefetch-distance}), narrowly
-    ahead of $32$ ($1.33\times$) and clearly ahead of $128$/$256$ ($1.27\times$/$1.22\times$).
-    $64$ floats gives the load pipeline enough lead time to complete the
-    DRAM/LLC fetch before the data is touched; going further ahead (128, 256)
-    starts letting the line get evicted again before use, which is exactly
-    why L2/LLC misses climb back up past distance$=64$ in
-    Fig.~\ref{fig:t2-prefetch-distance-metrics}. Distance $16$ is an outlier
-    low ($1.12\times$). It may be because it coincides with the kernel's $K$-unroll
-    granularity of 16: the prefetch and the load it is meant to hide land in
-    the same unrolled step, leaving almost no lead time. But it also might be due to CPU core's non deterministic clock cycles.
+    ahead of $32$ ($1.35\times$) and clearly ahead of $128$/$256$ ($1.27\times$/$1.25\times$).
+    $64$ and $32$ floats both give the load pipeline enough lead time to
+    complete the DRAM/LLC fetch before the data is touched, and sit close
+    enough together that which one wins depends on the size ($32$ actually
+    edges out $64$ at $N{=}1024$ alone). Distance $16$ is the clear low point
+    at both sizes ($1.23\times$); it coincides with the function's $K$-unroll
+    granularity of 16, so the prefetch and the load it is meant to hide land
+    in the same unrolled step, leaving little effective lead time. $128$/$256$
+    are consistently worse than $32$/$64$, consistent with prefetching far
+    enough ahead that the line risks being evicted again before use.
 
     \item \textbf{Cache fill level (locality hint) giving maximum speedup:}
     \texttt{\_MM\_HINT\_T0} (fill all cache levels), mean speedup $1.38\times$
@@ -353,17 +361,18 @@ config (distance$=64$, hint$=$T0, $T=64$).
     in L2, LLC, or a non-temporal buffer and pay a small extra hop up to L1D
     on the real load. That hop is cheap relative to a full memory fetch, so
     the spread across hints ($1.34$--$1.38\times$) is much narrower than the
-    spread across distances ($1.12$--$1.33\times$).
+    spread across distances ($1.23$--$1.36\times$).
 
     \item \textbf{L1D / L2 / LLC miss trends across sizes and parameters:}
     All three miss counts grow monotonically with $N$ (cubic work growth),
     from tens of thousands at $N=128$ to billions (L2) / tens of millions
     (LLC) at $N=3072$. Across distance and hint, L1D and \texttt{sw\_prefetch\_access.any}
     counts are nearly identical (prefetching does not change the number of
-    loads issued, only when the data for them arrives); L2 and LLC misses
-    vary more and are generally lower at distance$=64$/hint$=$T1 than at
-    other settings, consistent with those prefetches landing closer to the
-    actual point of use instead of being re-evicted first.
+    loads issued, only when the data for them arrives); L2 misses are
+    essentially flat across both sweeps, while LLC misses are the noisiest metric and do not track
+    speedup cleanly (lowest at distance$=32$, highest at distance$=64$, in the
+    distance sweep; lowest at hint$=$T1 in the hint sweep). LLC-miss counts
+    alone are not a reliable predictor of which parameter setting wins.
 
     \item \textbf{Effect of hardware prefetchers:} Disabling them hurts
     \texttt{naive} far more than \texttt{matmul\_prefetch} at $N=2048$
@@ -384,7 +393,7 @@ config (distance$=64$, hint$=$T0, $T=64$).
 
 \subsection{Implementation}
 
-The kernel keeps the natural $i\to j\to p$ loop order but register-blocks the
+The function keeps the natural $i\to j\to p$ loop order but register-blocks the
 $j$ (column-of-$B$) loop by \texttt{step}${}=4$: each iteration of the inner
 loop computes four output elements $C[i][j\,..\,j{+}3]$ at once. Four
 \texttt{\_\_m256} accumulators (\texttt{acc0..acc3}) are held in registers and
@@ -405,10 +414,10 @@ All loads are unaligned (\texttt{loadu}) so arbitrary \texttt{lda/ldb/ldc} are s
 
 \subsection{Baseline Profiling / Instruction Count}
 
-User-space instructions were attributed to each kernel with
+User-space instructions were attributed to each function with
 \texttt{perf record -e instructions:u} followed by \texttt{perf report}: the
-per-call figure is the run's total event count times the kernel's overhead
-percentage, divided by the number of times the harness invokes that kernel in
+per-call figure is the run's total event count times the function's overhead
+percentage, divided by the number of times the main function calls that function in
 a single-stage run (naive: 1 reference + 1 warmup + 1 + 3 timed ${}={}$ 6;
 SIMD: 1 warmup + 1 + 3 ${}={}$ 5). Table~\ref{tab:t2-simd-icount} gives the
 $1024^3$ point; Fig.~\ref{fig:t2-simd-icount-vs-size} shows the full size
@@ -501,7 +510,7 @@ no longer matters.
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.95\textwidth]{task2_simd_time_vs_size.png}
-    \caption{Kernel execution time (ms, log scale) vs.\ matrix size
+    \caption{execution time (ms, log scale) vs.\ matrix size
     ($M{=}N{=}K$). Same runs as
     Fig.~\ref{fig:t2-simd-width-vs-size}.}
     \label{fig:t2-simd-time-vs-size}
@@ -532,7 +541,7 @@ no longer matters.
           & Speedup vs.\ No SIMD & 7.95$\times$ & 10.94$\times$ & 16.88$\times$ & 19.08$\times$ & 11.84$\times$ & 9.84$\times$ & 5.27$\times$ & 5.39$\times$ & 4.81$\times$ & 5.04$\times$ & 4.09$\times$ \\
         \bottomrule
     \end{tabular}}
-    \caption{Instructions/call, kernel time, and speedup vs.\ matrix size, for each SIMD
+    \caption{Instructions/call, execution time, and speedup vs.\ matrix size, for each SIMD
     width. Instructions/call are retired user-space instructions from
     \texttt{perf record}/\texttt{perf report} (per-call = event count $\times$ overhead\%
     divided by function call count); times are the code's median
@@ -582,7 +591,7 @@ manually-unrolled $K$-steps of 8 floats each (16 floats/iteration) before a
 scalar tail. Software prefetch (\texttt{\_MM\_HINT\_T0}, distance $64$
 floats, same as Task 2A) is issued on the 3 active $B$ rows only, since $B$ is
 re-streamed once per internal loop iteration while the 4 $A$ rows are reused across
-all $j$ in a tile and mostly stay resident. Arbitrary $M/N/K/lda/ldb/ldc$ are
+all $j$ in a tile and mostly stay resident. Arbitrary \texttt{M/N/K/lda/ldb/ldc} are
 handled with scalar fallback loops on every edge: a $1$-row tail when $M \bmod
 4 \ne 0$, a $1$-column tail when a $T$-tile's width isn't a multiple of 3, and
 a scalar (with SIMD) dot-product tail on $K \bmod 8$. Block size and unroll
@@ -684,7 +693,7 @@ gap.
     \centering
     \begin{tabular}{lrrr}
         \toprule
-        \textbf{Metric} & \textbf{llama.cpp native} & \textbf{student kernel} & \textbf{Speedup} \\
+        \textbf{Metric} & \textbf{llama.cpp native} & \textbf{Our implementation} & \textbf{Speedup} \\
         \midrule
         Prompt-eval (tok/s) & 12{,}562.81 & 16{,}129.03 & $1.28\times$ \\
         Generation (tok/s)  & 7{,}437.14  & 9{,}826.86  & $1.32\times$ \\
