@@ -20,7 +20,7 @@ void conv_reorder(const float* in, float* out, const float* ker,
             float k = ker[ky * K + kx];
             for(int oy = 0; oy < H ; ++oy){
                 const float* inStart = in + (oy + ky) * in_stride + kx;
-                for(int ox = 0 ; ox < H ; ++ox){
+                for(int ox = 0 ; ox < W ; ++ox){
                     out[oy * W + ox] += *(inStart + ox) * k;
                 }
             }

@@ -157,15 +157,6 @@ accumulator (\texttt{acc0}--\texttt{acc3}) that accumulates independently
 over the $K^2$ kernel values. Because these accumulators are independent of
 each other, the CPU can do multiple add operations simultaneously, hiding the latency.
 
-\subsubsection*{Considerations}
-
-The unroll factor is 4; a scalar tail loop handles any $W \bmod 4 \ne 0$
-remainder one pixel at a time, so arbitrary image widths are supported.
-Unlike the reordered version, each output pixel is completed before moving to
-the next group, so the output array is written exactly once, the same as
-naive. There are no extra passes over the image and no multi-pass cache
-pressure.
-
 \subsubsection*{Results}
 \begin{figure}[H]
     \centering
